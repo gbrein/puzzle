@@ -84,6 +84,8 @@ export interface GenerateResult {
   palette: Palette
   /** Como a placa vai ficar impressa — para o preview 2D. */
   preview: Bitmap
+  /** A malha final concatenada — para o preview 3D. Use direto, sem parsear o STL de volta. */
+  mesh: Mesh
   stats: {
     cols: number
     rows: number
@@ -218,6 +220,7 @@ export function generatePuzzle(opts: GenerateOptions): GenerateResult {
     plan,
     palette,
     preview,
+    mesh,
     stats: {
       cols: puzzle.cols,
       rows: puzzle.rows,

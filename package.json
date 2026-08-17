@@ -10,6 +10,7 @@
   "scripts": {
     "test": "node --test \"src/**/*.test.ts\"",
     "demo": "node src/cli.ts",
+    "typecheck": "tsc --noEmit",
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview"
@@ -21,6 +22,9 @@
     "three": "^0.180.0"
   },
   "devDependencies": {
+    "@types/node": "^26.2.0",
+    "@types/three": "^0.185.4",
+    "typescript": "^5.9.3",
     "vite": "^7.3.6"
   },
   "allowScripts": {
