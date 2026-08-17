@@ -1,0 +1,423 @@
+/* Grade de amostras de filamento + paleta ao vivo.
+ * Classes com prefixo `fil-` para não colidir com o style.css global (lane B).
+ * Importado pelo próprio filamentos.ts e paleta.ts — o Vite resolve.
+ */
+
+.fil-seletor {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.fil-busca {
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid #2a3340;
+  border-radius: 8px;
+  background: #151b23;
+  color: #e6edf3;
+  font-size: 13px;
+}
+
+.fil-busca:focus {
+  outline: none;
+  border-color: #4f8cff;
+}
+
+.fil-dica {
+  margin: 0;
+  font-size: 12px;
+  color: #93a1b3;
+}
+
+/* --- ordem do cronograma --- */
+
+.fil-lista-selecionados {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.fil-chip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: #1b232e;
+  border: 1px solid #2a3340;
+  border-radius: 8px;
+  padding: 6px 10px;
+  font-size: 13px;
+}
+
+.fil-chip-pos {
+  color: #4f8cff;
+  font-weight: 600;
+  min-width: 22px;
+}
+
+.fil-chip-swatch {
+  width: 14px;
+  height: 14px;
+  border-radius: 3px;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  flex-shrink: 0;
+}
+
+.fil-chip-nome {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.fil-chip-td {
+  color: #93a1b3;
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.fil-chip-acoes {
+  display: flex;
+  gap: 2px;
+}
+
+.fil-btn-chip {
+  background: none;
+  border: none;
+  color: #93a1b3;
+  font-size: 13px;
+  line-height: 1;
+  padding: 2px 5px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.fil-btn-chip:hover:not(:disabled) {
+  color: #e6edf3;
+  background: #151b23;
+}
+
+.fil-btn-chip:disabled {
+  opacity: 0.3;
+  cursor: default;
+}
+
+.fil-base-selo {
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: rgba(79, 140, 255, 0.15);
+  border: 1px solid #4f8cff;
+  color: #6ba1ff;
+  white-space: nowrap;
+}
+
+/* --- grade de amostras --- */
+
+.fil-grade {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(92px, 1fr));
+  gap: 8px;
+}
+
+.fil-amostra {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px;
+  background: #1b232e;
+  border: 1px solid #2a3340;
+  border-radius: 8px;
+  cursor: pointer;
+  text-align: left;
+  color: #e6edf3;
+  font: inherit;
+  transition: border-color 0.12s ease, background-color 0.12s ease;
+}
+
+.fil-amostra:hover {
+  border-color: #4f8cff;
+}
+
+.fil-amostra.ativo {
+  border-color: #4f8cff;
+  box-shadow: 0 0 0 1px #4f8cff;
+  background: #16202e;
+}
+
+.fil-swatch {
+  display: block;
+  width: 100%;
+  aspect-ratio: 1.5;
+  border-radius: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+}
+
+.fil-rampa {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 2px;
+}
+
+.fil-rampa-celula {
+  height: 12px;
+  border-radius: 2px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+}
+
+.fil-amostra-nome {
+  font-size: 11px;
+  line-height: 1.25;
+  color: #93a1b3;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+
+.fil-amostra-check {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: #4f8cff;
+  color: #fff;
+  font-size: 12px;
+  font-weight: 700;
+  display: none;
+  align-items: center;
+  justify-content: center;
+}
+
+.fil-amostra.ativo .fil-amostra-check {
+  display: flex;
+}
+
+.fil-badge-estimado {
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: #3a2d12;
+  border: 1px solid #d29922;
+  color: #f2d394;
+  white-space: nowrap;
+  width: fit-content;
+}
+
+.fil-busca-vazia {
+  color: #93a1b3;
+  font-size: 13px;
+  margin: 0;
+}
+
+/* --- rolo manual --- */
+
+details.fil-manual {
+  border: 1px solid #2a3340;
+  border-radius: 8px;
+  padding: 10px 12px;
+}
+
+.fil-manual summary {
+  cursor: pointer;
+  color: #93a1b3;
+  font-size: 13px;
+}
+
+.fil-manual-form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid #2a3340;
+}
+
+.fil-manual-linha {
+  display: grid;
+  grid-template-columns: 1fr auto auto auto;
+  gap: 8px;
+  align-items: end;
+}
+
+@media (max-width: 520px) {
+  .fil-manual-linha {
+    grid-template-columns: 1fr;
+  }
+}
+
+.fil-grupo {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.fil-grupo > span {
+  font-size: 11px;
+  color: #93a1b3;
+}
+
+.fil-grupo input {
+  padding: 6px 8px;
+  border: 1px solid #2a3340;
+  border-radius: 6px;
+  background: #151b23;
+  color: #e6edf3;
+  font-size: 13px;
+  width: 100%;
+}
+
+.fil-grupo input:focus {
+  outline: none;
+  border-color: #4f8cff;
+}
+
+.fil-grupo input[type='color'] {
+  width: 46px;
+  height: 32px;
+  padding: 2px;
+  cursor: pointer;
+}
+
+.fil-erro-form {
+  color: #ffb3ac;
+  font-size: 12px;
+  margin: 0;
+}
+
+.fil-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 7px 12px;
+  border-radius: 8px;
+  border: 1px solid #2a3340;
+  background: #1b232e;
+  color: #e6edf3;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.fil-btn:hover:not(:disabled) {
+  border-color: #4f8cff;
+}
+
+.fil-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.fil-btn-primario {
+  background: #4f8cff;
+  border-color: #4f8cff;
+  color: #fff;
+}
+
+.fil-btn-primario:hover:not(:disabled) {
+  background: #6ba1ff;
+  border-color: #6ba1ff;
+}
+
+/* --- paleta ao vivo --- */
+
+.fil-paleta {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.fil-paleta-titulo {
+  margin: 0;
+  font-size: 12px;
+  color: #93a1b3;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.fil-bar {
+  display: flex;
+  height: 18px;
+  border-radius: 4px;
+  overflow: hidden;
+  border: 1px solid #2a3340;
+}
+
+.fil-bar-faixa {
+  flex: 1 1 0;
+  min-width: 1px;
+}
+
+.fil-gama {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.fil-gama-titulo {
+  margin: 0;
+  font-size: 12px;
+  color: #e6edf3;
+}
+
+.fil-gama-trilho {
+  position: relative;
+  height: 10px;
+  background: #151b23;
+  border: 1px solid #2a3340;
+  border-radius: 999px;
+}
+
+.fil-gama-preenchimento {
+  position: absolute;
+  inset: 0 auto 0 0;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #3fb950, #4f8cff);
+}
+
+.fil-gama-marcador {
+  position: absolute;
+  top: -3px;
+  bottom: -3px;
+  width: 2px;
+  background: #d29922;
+}
+
+.fil-gama-rotulos {
+  display: flex;
+  justify-content: space-between;
+  font-size: 11px;
+  color: #93a1b3;
+}
+
+.fil-gama-aviso {
+  margin: 0;
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: #3a2d12;
+  border: 1px solid #d29922;
+  color: #f2d394;
+  font-size: 12px;
+}
+
+.fil-nota {
+  margin: 0;
+  font-size: 11px;
+  color: #93a1b3;
+  font-style: italic;
+}
+
+.fil-vazio {
+  margin: 0;
+  font-size: 13px;
+  color: #93a1b3;
+}

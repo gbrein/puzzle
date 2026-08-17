@@ -4,7 +4,16 @@ import { desenharPreview2D } from '../preview/preview2d.ts'
 import { criarVisualizador3D, type Visualizador3D } from '../preview/preview3d.ts'
 import { cancelar, gerarNoWorker, type Progresso } from '../worker/client.ts'
 import { montarFilamentos } from './filamentos.ts'
+import { montarPaleta } from './paleta.ts'
 import { montarCrop, montarUpload } from './foto.ts'
+import {
+  consequenciaDoNivel,
+  NIVEIS_DIFICULDADE,
+  pecasDoNivel,
+  tetoDePecas,
+  type NivelDificuldade,
+} from './dificuldade.ts'
+import type { PedidoPreview, RespostaPreview } from './preview.worker.ts'
 
 // ---------------------------------------------------------------- utilidades
 
@@ -42,6 +51,7 @@ interface Configuracao {
   maxSwaps: number
   kerf: number
   dither: boolean
+  extrusionWidth: number
   swapMode: 'manual' | 'ams'
   printerModel: string
 }
@@ -55,6 +65,7 @@ const configuracao: Configuracao = {
   maxSwaps: 3,
   kerf: 0.4,
   dither: false,
+  extrusionWidth: 0.42,
   swapMode: 'manual',
   printerModel: '',
 }
@@ -66,7 +77,21 @@ let gerando = false
 let cancelado = false
 let visualizador: Visualizador3D | null = null
 
+// Preview ao vivo (caminho de cor no worker) — ver o bloco "preview ao vivo".
+let temporizadorPreview: number | null = null
+let previewWorker: Worker | null = null
+let proximoIdPreview = 0
+let ultimaPreview: Bitmap | null = null
+let nivelSelecionado: NivelDificuldade | null = NIVEIS_DIFICULDADE[1]
+
 // ------------------------------------------------------------ controles
+
+interface ControleNumero {
+  campo: HTMLElement
+  input: HTMLInputElement
+  valor: HTMLSpanElement
+  formatar: (v: number) => string
+}
 
 const controleNumero = (opts: {
   rotulo: string
@@ -77,7 +102,7 @@ const controleNumero = (opts: {
   formatar: (v: number) => string
   aoMudar: (v: number) => void
   ajuda?: string
-}): HTMLElement => {
+}): ControleNumero => {
   const campo = cria('label', 'controle')
   const cabecalho = cria('span', 'cabecalho')
   const rotulo = cria('span', 'rotulo', opts.rotulo)
@@ -99,7 +124,7 @@ const controleNumero = (opts: {
     const ajuda = cria('span', 'ajuda', opts.ajuda)
     campo.append(ajuda)
   }
-  return campo
+  return { campo, input, valor, formatar: opts.formatar }
 }
 
 const controleSelect = (opts: {
@@ -159,12 +184,12 @@ app.replaceChildren()
 const cabecalho = cria('header', 'cabecalho')
 const titulo = cria('h1')
 titulo.innerHTML = '<span class="logo">puzzle</span> — quebra-cabeça imprimível a partir de uma foto'
-const subtitulo = cria('p', undefined, 'Sobe uma foto, escolhe os rolos de filamento, ajusta a impressão e baixa um .3mf de projeto com as trocas de cor embutidas. Tudo no seu navegador.')
+const subtitulo = cria('p', undefined, 'Sobe uma foto, escolhe os rolos, vê a cor resolvida ao vivo e baixa um .3mf de projeto com as trocas de cor embutidas. Tudo no seu navegador.')
 cabecalho.append(titulo, subtitulo)
 
 const layout = cria('main', 'layout')
 const colEsquerda = cria('aside', 'coluna')
-const colDireita = cria('section', 'coluna')
+const colDireita = cria('section', 'coluna coluna-preview')
 
 // --- coluna esquerda: foto ---
 
@@ -182,23 +207,61 @@ linhaCrop.append(infoCrop, botaoAplicar)
 areaCrop.append(linhaCrop)
 painelFoto.append(tituloFoto, areaUpload, areaCrop)
 
-// --- coluna esquerda: filamentos ---
+// --- coluna esquerda: cores ---
 
-const painelFilamentos = cria('section', 'painel')
-const tituloFilamentos = cria('h2')
-tituloFilamentos.innerHTML = '<span class="passo">2.</span> Filamentos'
-const dicaFilamentos = cria('p', 'dica', 'Escolha os rolos na ordem em que quer que entrem no cronograma. O primeiro vira a base da peça.')
+const painelCores = cria('section', 'painel')
+const tituloCores = cria('h2')
+tituloCores.innerHTML = '<span class="passo">2.</span> Cores'
+const dicaCores = cria('p', 'dica', 'Escolha os rolos na ordem em que quer que entrem no cronograma. O primeiro vira a base da peça. A prévia da cor ao lado atualiza sozinha.')
 const areaFilamentos = cria('div')
-painelFilamentos.append(tituloFilamentos, dicaFilamentos, areaFilamentos)
+const areaPaleta = cria('div', 'area-paleta')
+painelCores.append(tituloCores, dicaCores, areaFilamentos, areaPaleta)
 
-// --- coluna esquerda: impressão ---
+// --- coluna esquerda: tamanho + dificuldade ---
 
-const painelImpressao = cria('section', 'painel')
-const tituloImpressao = cria('h2')
-tituloImpressao.innerHTML = '<span class="passo">3.</span> Impressão'
-const areaControles = cria('div', 'controles')
+const painelDificuldade = cria('section', 'painel')
+const tituloDificuldade = cria('h2')
+tituloDificuldade.innerHTML = '<span class="passo">3.</span> Tamanho e dificuldade'
 
 const TAMANHOS = [100, 140, 180, 210, 250]
+const tamanhoPlaca = controleSelect({
+  rotulo: 'Tamanho da placa',
+  opcoes: TAMANHOS.map((t) => ({ valor: String(t), rotulo: `${t} mm` })),
+  valor: String(configuracao.size),
+  aoMudar: (v) => {
+    configuracao.size = Number(v)
+    // tamanho NÃO muda o resultado de cor — nada a recalcular no preview
+    atualizaDificuldade()
+    atualizaLimitesSliderPecas()
+  },
+  ajuda: 'Maior dimensão da placa (100/140/180/210/250 mm). A dificuldade recalcula a contagem de peças para caber.',
+})
+
+const niveis = cria('div', 'niveis')
+const botaoNivel: HTMLButtonElement[] = []
+for (const nivel of NIVEIS_DIFICULDADE) {
+  const b = cria('button', 'nivel', nivel.nome)
+  b.type = 'button'
+  b.dataset.id = nivel.id
+  b.title = nivel.dica
+  b.addEventListener('click', () => selecionarNivel(nivel))
+  botaoNivel.push(b)
+  niveis.append(b)
+}
+const consequencia = cria('p', 'consequencia')
+const dicaNivel = cria('p', 'dica-nivel')
+const avisoInsano = cria('p', 'aviso-dificuldade oculto')
+const areaDificuldade = cria('div', 'dificuldade')
+areaDificuldade.append(niveis, consequencia, dicaNivel, avisoInsano)
+painelDificuldade.append(tituloDificuldade, tamanhoPlaca, areaDificuldade)
+
+// --- coluna esquerda: avançado (recolhido) ---
+
+const painelAvancado = cria('details', 'avancado')
+const sumarioAvancado = cria('summary', undefined, 'Avançado — camadas, kerf e impressora')
+const areaAvancado = cria('div', 'controles')
+painelAvancado.append(sumarioAvancado, areaAvancado)
+
 const ALTURAS_CAMADA = [0.08, 0.12, 0.16, 0.2, 0.24, 0.28]
 const PRESETS = [
   { valor: '', rotulo: 'Genérico (bico 0,4 mm)' },
@@ -207,47 +270,38 @@ const PRESETS = [
   { valor: 'Bambu Lab A1', rotulo: 'Bambu Lab A1' },
 ]
 
-areaControles.append(
-  controleSelect({
-    rotulo: 'Tamanho da placa',
-    opcoes: TAMANHOS.map((t) => ({ valor: String(t), rotulo: `${t} mm` })),
-    valor: String(configuracao.size),
-    aoMudar: (v) => {
-      configuracao.size = Number(v)
-    },
-    ajuda: 'Maior dimensão da placa. 100/140/180/210/250 mm.',
-  }),
+// o slider cru de peças — o teto é calculado do lado mínimo da peça, que vem
+// da largura de extrusão (pescoço da aba precisa de ~2,5 filetes para não quebrar)
+const sliderPecas = controleNumero({
+  rotulo: 'Peças (contagem crua)',
+  min: 1,
+  max: 120,
+  passo: 1,
+  valor: configuracao.pieceCount,
+  formatar: (v) => `${v} peças`,
+  aoMudar: (v) => {
+    configuracao.pieceCount = v
+    // quem usa o slider tomou o controle do nível de dificuldade
+    nivelSelecionado = null
+    atualizaDificuldade()
+  },
+  ajuda: 'Teto calculado do lado mínimo seguro da peça (pescoço da aba precisa de ~2,5 filetes de extrusão).',
+})
+
+const controlesAvancados = [
+  sliderPecas.campo,
   controleNumero({
-    rotulo: 'Peças',
-    min: 4,
-    max: 120,
-    passo: 1,
-    valor: configuracao.pieceCount,
-    formatar: (v) => `${v} peças`,
-    aoMudar: (v) => {
-      configuracao.pieceCount = v
-    },
-  }),
-  controleNumero({
-    rotulo: 'Camadas de cor',
-    min: 1,
-    max: 60,
-    passo: 1,
-    valor: configuracao.layers,
-    formatar: (v) => `${v} camadas`,
-    aoMudar: (v) => {
-      configuracao.layers = v
-    },
-    ajuda: 'Mais camadas = mais tons, print mais alto.',
-  }),
-  controleSelect({
     rotulo: 'Altura de camada',
-    opcoes: ALTURAS_CAMADA.map((a) => ({ valor: String(a), rotulo: `${a.toFixed(2).replace('.', ',')} mm` })),
-    valor: String(configuracao.layerHeight),
+    min: 0.08,
+    max: 0.28,
+    passo: 0.02,
+    valor: configuracao.layerHeight,
+    formatar: (v) => `${v.toFixed(2).replace('.', ',')} mm`,
     aoMudar: (v) => {
-      configuracao.layerHeight = Number(v)
+      configuracao.layerHeight = v
+      agendarPreview()
     },
-  }),
+  }).campo,
   controleNumero({
     rotulo: 'Espessura da base',
     min: 0.8,
@@ -257,9 +311,23 @@ areaControles.append(
     formatar: (v) => `${v.toFixed(1)} mm`,
     aoMudar: (v) => {
       configuracao.baseThickness = v
+      agendarPreview()
     },
     ajuda: 'Vira um número inteiro de camadas.',
-  }),
+  }).campo,
+  controleNumero({
+    rotulo: 'Camadas de cor',
+    min: 1,
+    max: 60,
+    passo: 1,
+    valor: configuracao.layers,
+    formatar: (v) => `${v} camadas`,
+    aoMudar: (v) => {
+      configuracao.layers = v
+      agendarPreview()
+    },
+    ajuda: 'Mais camadas = mais tons, print mais alto. É o que mais muda a cor.',
+  }).campo,
   controleNumero({
     rotulo: 'Trocas máximas',
     min: 1,
@@ -269,9 +337,10 @@ areaControles.append(
     formatar: (v) => `${v}`,
     aoMudar: (v) => {
       configuracao.maxSwaps = v
+      agendarPreview()
     },
     ajuda: 'Contando a troca base → primeira cor.',
-  }),
+  }).campo,
   controleNumero({
     rotulo: 'Folga (kerf)',
     min: 0.1,
@@ -281,14 +350,31 @@ areaControles.append(
     formatar: (v) => `${v.toFixed(2)} mm`,
     aoMudar: (v) => {
       configuracao.kerf = v
+      // kerf é geometria — não muda a cor, então o preview ao vivo não recalcula
     },
-    ajuda: 'Folga de encaixe entre peças — calibre na sua impressora e filamento.',
-  }),
+    ajuda: 'Folga de encaixe entre peças — calibre uma vez na sua impressora e filamento.',
+  }).campo,
+  controleNumero({
+    rotulo: 'Largura de extrusão',
+    min: 0.3,
+    max: 0.6,
+    passo: 0.02,
+    valor: configuracao.extrusionWidth,
+    formatar: (v) => `${v.toFixed(2)} mm`,
+    aoMudar: (v) => {
+      configuracao.extrusionWidth = v
+      // muda a célula do relevo (resolução do preview) e o teto de peças
+      atualizaLimitesSliderPecas()
+      agendarPreview()
+    },
+    ajuda: 'Bico da impressora. É o piso da resolução e define o teto de peças.',
+  }).campo,
   controleCheck({
     rotulo: 'Dither (difusão de erro)',
     valor: configuracao.dither,
     aoMudar: (v) => {
       configuracao.dither = v
+      agendarPreview()
     },
     ajuda: 'Ajuda quando a foto está dentro do que as cores escolhidas alcançam.',
   }),
@@ -312,34 +398,45 @@ areaControles.append(
     },
     ajuda: 'O .3mf grava o modelo da máquina. Genérico usa o default do núcleo.',
   }),
-)
+]
+areaAvancado.append(...controlesAvancados)
 
-const botaoGerar = cria('button', 'btn btn-primario btn-grande', 'Gerar quebra-cabeça')
+const botaoGerar = cria('button', 'btn btn-primario btn-grande', 'Gerar geometria e .3mf')
 const areaErro = cria('div', 'erro oculto')
-painelImpressao.append(tituloImpressao, areaControles, botaoGerar, areaErro)
 
-colEsquerda.append(painelFoto, painelFilamentos, painelImpressao)
+colEsquerda.append(painelFoto, painelCores, painelDificuldade, painelAvancado, botaoGerar, areaErro)
 
-// --- coluna direita: resultado ---
+// --- coluna direita: preview protagonista (sticky) ---
 
 const areaAviso = cria('div', 'aviso oculto')
-colDireita.append(areaAviso)
 
-const painelPreviews = cria('section', 'painel previews')
-const tituloPreviews = cria('h2', undefined, 'Resultado')
+const painelPreview = cria('section', 'painel painel-preview')
+const tituloPreview = cria('h2', undefined, 'Prévia')
+const abasPreview = cria('div', 'abas-preview')
+const aba2d = cria('button', 'aba ativa', 'Cor (2D)')
+const aba3d = cria('button', 'aba', 'Modelo (3D)')
+abasPreview.append(aba2d, aba3d)
+
 const bloco2d = cria('div', 'bloco-preview')
-const titulo2d = cria('h3', undefined, 'Como fica impresso')
 const canvas2d = cria('canvas')
 canvas2d.id = 'preview-2d'
-bloco2d.append(titulo2d, canvas2d)
-const bloco3d = cria('div', 'bloco-preview')
-const titulo3d = cria('h3', undefined, 'Modelo 3D')
+canvas2d.classList.add('oculto')
+const estadoVazio2d = cria('div', 'estado-vazio')
+bloco2d.append(canvas2d, estadoVazio2d)
+
+const bloco3d = cria('div', 'bloco-preview oculto')
 const container3d = cria('div')
 container3d.id = 'preview-3d'
-bloco3d.append(titulo3d, container3d)
-const vazio = cria('p', 'dica', 'Nada gerado ainda — a prévia aparece aqui.')
-bloco3d.append(vazio)
-painelPreviews.append(tituloPreviews, bloco2d, bloco3d)
+container3d.classList.add('oculto')
+const estadoVazio3d = cria(
+  'div',
+  'estado-vazio',
+  'O modelo 3D das peças aparece aqui depois de gerar — mostra a geometria, não a cor.',
+)
+bloco3d.append(container3d, estadoVazio3d)
+
+const statusCor = cria('p', 'status-cor')
+painelPreview.append(tituloPreview, abasPreview, bloco2d, bloco3d, statusCor)
 
 const painelStats = cria('section', 'painel oculto')
 const tituloStats = cria('h2', undefined, 'Estatísticas')
@@ -351,7 +448,7 @@ const tituloDownloads = cria('h2', undefined, 'Baixar')
 const areaDownloads = cria('div', 'downloads')
 painelDownloads.append(tituloDownloads, areaDownloads)
 
-colDireita.append(painelPreviews, painelStats, painelDownloads)
+colDireita.append(painelPreview, areaAviso, painelStats, painelDownloads)
 
 // --- spinner ---
 
@@ -402,6 +499,12 @@ botaoAplicar.addEventListener('click', () => {
   bitmap = b
   limpaErro()
   infoCrop.textContent = `Recorte aplicado: ${b.width} × ${b.height} px`
+  // foto nova muda o alvo do preview — recalcula o caminho de cor
+  atualizaDificuldade()
+  atualizaLimitesSliderPecas()
+  atualizaEstadoVazio()
+  agendarPreview()
+  atualizaGerar()
 })
 
 // ------------------------------------------------------------- filamentos
@@ -411,8 +514,178 @@ montarFilamentos({
   estado: filamentos,
   aoMudar: () => {
     atualizaGerar()
+    atualizaEstadoVazio()
+    // filamento é o que mais muda a cor — recálculo ao vivo, com debounce
+    agendarPreview()
   },
 })
+
+// ------------------------------------------------------ preview ao vivo
+
+/**
+ * Preview 2D ao vivo, medido (ver docs/plano-ui.md §medições):
+ * - `solveHeights` + `renderHeightMap` custam 7 ms;
+ * - `searchSchedule` custa 621 ms — por isso roda no worker, com debounce.
+ *
+ * Tamanho, peças e kerf NÃO mexem no resultado de cor — mexer neles não
+ * recalcula nada. Filamentos, camadas e base disparam o recálculo.
+ */
+/**
+ * A paleta e a gama saem de `buildPalette`, que custa 0 ms — então elas
+ * atualizam na hora, fora do debounce que segura o preview (esse sim paga os
+ * ~621 ms do `searchSchedule`). É o ponto da interface em que a pessoa descobre
+ * que as cores escolhidas não alcançam a foto **antes** de gerar, e não depois.
+ */
+const atualizaPaleta = (): void => {
+  montarPaleta(areaPaleta, filamentos, {
+    layers: configuracao.layers,
+    layerHeight: configuracao.layerHeight,
+    baseLayers: Math.max(1, Math.round(configuracao.baseThickness / configuracao.layerHeight)),
+  })
+}
+
+const agendarPreview = (): void => {
+  atualizaPaleta()
+  if (temporizadorPreview !== null) window.clearTimeout(temporizadorPreview)
+  temporizadorPreview = window.setTimeout(() => {
+    temporizadorPreview = null
+    rodarPreview()
+  }, 250)
+}
+
+const rodarPreview = (): void => {
+  if (!bitmap || filamentos.length === 0) return
+  previewWorker?.terminate()
+  const id = ++proximoIdPreview
+  const worker = new Worker(new URL('./preview.worker.ts', import.meta.url), { type: 'module' })
+  previewWorker = worker
+  statusCor.textContent = 'atualizando cor…'
+
+  worker.onmessage = (e: MessageEvent<RespostaPreview>) => {
+    if (e.data.id !== id) return
+    previewWorker = null
+    worker.terminate()
+    statusCor.textContent = ''
+    if (e.data.tipo === 'resultado') {
+      ultimaPreview = e.data.preview
+      desenhaPreview2d(ultimaPreview)
+    }
+  }
+  worker.onerror = () => {
+    previewWorker = null
+    worker.terminate()
+    statusCor.textContent = ''
+  }
+
+  const pedido: PedidoPreview = {
+    tipo: 'preview',
+    id,
+    image: bitmap,
+    filaments: filamentos,
+    size: configuracao.size,
+    layers: configuracao.layers,
+    layerHeight: configuracao.layerHeight,
+    baseThickness: configuracao.baseThickness,
+    maxSwaps: configuracao.maxSwaps,
+    dither: configuracao.dither,
+    extrusionWidth: configuracao.extrusionWidth,
+  }
+  worker.postMessage(pedido)
+}
+
+const desenhaPreview2d = (preview: Bitmap): void => {
+  desenharPreview2D(canvas2d, preview)
+  // o quadro do canvas acompanha a proporção da foto — sem distorcer a cor
+  canvas2d.style.aspectRatio = `${preview.width} / ${preview.height}`
+  canvas2d.classList.remove('oculto')
+  estadoVazio2d.classList.add('oculto')
+}
+
+const atualizaEstadoVazio = (): void => {
+  if (ultimaPreview) return
+  if (!bitmap) {
+    estadoVazio2d.innerHTML =
+      'A prévia da cor resolvida aparece aqui ao vivo, conforme você escolhe os rolos. <strong>Suba e recorte uma foto</strong> para começar.'
+  } else if (filamentos.length === 0) {
+    estadoVazio2d.innerHTML =
+      'Foto pronta. <strong>Escolha pelo menos um filamento</strong> para a cor da prévia aparecer.'
+  } else {
+    estadoVazio2d.innerHTML = '<strong>Gerando a prévia…</strong>'
+  }
+  canvas2d.classList.add('oculto')
+  estadoVazio2d.classList.remove('oculto')
+}
+
+// alternância 2D/3D no mesmo quadro — a cor (2D) é o default
+const trocarAba = (aba: '2d' | '3d'): void => {
+  aba2d.classList.toggle('ativa', aba === '2d')
+  aba3d.classList.toggle('ativa', aba === '3d')
+  bloco2d.classList.toggle('oculto', aba !== '2d')
+  bloco3d.classList.toggle('oculto', aba !== '3d')
+  if (aba === '2d' && ultimaPreview) desenhaPreview2d(ultimaPreview)
+  if (aba === '3d') visualizador?.redimensionar()
+}
+aba2d.addEventListener('click', () => trocarAba('2d'))
+aba3d.addEventListener('click', () => trocarAba('3d'))
+
+// ------------------------------------------------- dificuldade e peças
+
+const dimensoesPlaca = (): { largura: number; altura: number } | null => {
+  if (!bitmap) return null
+  const aspect = bitmap.width / bitmap.height
+  return aspect >= 1
+    ? { largura: configuracao.size, altura: configuracao.size / aspect }
+    : { largura: configuracao.size * aspect, altura: configuracao.size }
+}
+
+const selecionarNivel = (nivel: NivelDificuldade): void => {
+  nivelSelecionado = nivel
+  // dificuldade é geometria — mexe no nº de peças, não na cor: sem recálculo
+  atualizaDificuldade()
+  atualizaLimitesSliderPecas()
+}
+
+const atualizaDificuldade = (): void => {
+  for (const b of botaoNivel) b.classList.toggle('ativo', b.dataset.id === nivelSelecionado?.id)
+
+  const dims = dimensoesPlaca()
+  if (!dims) {
+    consequencia.textContent = 'Suba e recorte uma foto para ver a contagem de peças.'
+    dicaNivel.textContent = nivelSelecionado?.dica ?? ''
+  } else if (nivelSelecionado) {
+    configuracao.pieceCount = pecasDoNivel(nivelSelecionado, dims.largura, dims.altura)
+    consequencia.textContent = consequenciaDoNivel(nivelSelecionado, dims.largura, dims.altura)
+    dicaNivel.textContent = nivelSelecionado.dica
+  } else {
+    consequencia.textContent = `${configuracao.pieceCount} peças — contagem manual (slider no avançado)`
+    dicaNivel.textContent = ''
+  }
+
+  // sincroniza o valor mostrado no slider avançado com o que a dificuldade decidiu
+  sliderPecas.input.value = String(configuracao.pieceCount)
+  sliderPecas.valor.textContent = sliderPecas.formatar(configuracao.pieceCount)
+
+  // aviso específico do nível Insano (peça frágil, kerf calibrado)
+  const aviso = nivelSelecionado?.id === 'insano' ? nivelSelecionado.aviso : undefined
+  if (aviso) {
+    avisoInsano.textContent = aviso
+    avisoInsano.classList.remove('oculto')
+  } else {
+    avisoInsano.classList.add('oculto')
+  }
+}
+
+const atualizaLimitesSliderPecas = (): void => {
+  const dims = dimensoesPlaca()
+  if (!dims) return
+  const teto = tetoDePecas(dims.largura, dims.altura, configuracao.extrusionWidth)
+  sliderPecas.input.max = String(teto)
+  if (configuracao.pieceCount > teto) {
+    configuracao.pieceCount = teto
+    sliderPecas.input.value = String(teto)
+    sliderPecas.valor.textContent = sliderPecas.formatar(teto)
+  }
+}
 
 // --------------------------------------------------------------- gerar
 
@@ -428,16 +701,26 @@ const atualizaGerar = (): void => {
 
 const mostraSpinner = (progresso: Progresso | null): void => {
   spinner.classList.remove('oculto')
-  textoSpinner.textContent = progresso ? `${progresso.etapa} — ${Math.round(progresso.pct * 100)}%` : 'Gerando…'
+  // pct já vem em 0..100 (etapa grossa do worker)
+  textoSpinner.textContent = progresso ? `${progresso.etapa} — ${Math.round(progresso.pct)}%` : 'Gerando…'
 }
 
 const escondeSpinner = (): void => {
   spinner.classList.add('oculto')
 }
 
+/** Só geometria + .3mf — a cor já está no preview ao vivo. */
 const gerar = async (): Promise<void> => {
   if (gerando) return
   if (!bitmap || filamentos.length === 0) return
+
+  // o resultado completo é a verdade — descarta preview ao vivo pendente
+  if (temporizadorPreview !== null) {
+    window.clearTimeout(temporizadorPreview)
+    temporizadorPreview = null
+  }
+  previewWorker?.terminate()
+  previewWorker = null
 
   gerando = true
   cancelado = false
@@ -456,6 +739,7 @@ const gerar = async (): Promise<void> => {
     baseThickness: configuracao.baseThickness,
     maxSwaps: configuracao.maxSwaps,
     dither: configuracao.dither,
+    extrusionWidth: configuracao.extrusionWidth,
     swapMode: configuracao.swapMode,
     printerModel: configuracao.printerModel || undefined,
   }
@@ -515,8 +799,9 @@ const mostraResultado = (res: GenerateResult): void => {
     areaAviso.classList.add('oculto')
   }
 
-  // stats
-  areaStats.replaceChildren(
+  // stats — placas e gramas vêm da lane C; só mostram quando a geração devolver
+  const extras = s as typeof s & { plates?: number; grams?: number }
+  const itens = [
     stat('Peças', `${s.pieces} (${s.cols}×${s.rows})`),
     stat('Tamanho', `${s.width}×${s.height} mm`),
     stat('Triângulos', s.triangles.toLocaleString('pt-BR')),
@@ -525,27 +810,30 @@ const mostraResultado = (res: GenerateResult): void => {
     stat('ΔE médio', s.deltaE.toFixed(1)),
     stat('Altura total', `${s.totalHeightMm.toFixed(2)} mm`),
     stat('Gama da paleta', s.paletteSpan.toFixed(0)),
-  )
+  ]
+  if (extras.plates !== undefined) itens.push(stat('Placas', `${extras.plates}`))
+  if (extras.grams !== undefined) itens.push(stat('Peso estimado', `${extras.grams.toFixed(0)} g`))
+  areaStats.replaceChildren(...itens)
   painelStats.classList.remove('oculto')
 
   // downloads
   const base = `puzzle-${configuracao.size}mm-${configuracao.pieceCount}pecas`
-  const itens: [string, Blob, string][] = [
+  const itensDownload: [string, Blob, string][] = [
     ['.3mf (projeto)', new Blob([res.threemf as Uint8Array<ArrayBuffer>], { type: 'model/3mf' }), `${base}.3mf`],
     ['.stl (reserva)', new Blob([res.stl as Uint8Array<ArrayBuffer>], { type: 'model/stl' }), `${base}.stl`],
     ['swaps.txt', new Blob([res.swaps], { type: 'text/plain;charset=utf-8' }), `${base}-trocas.txt`],
   ]
   areaDownloads.replaceChildren()
-  for (const [rotulo, blob, nome] of itens) {
+  for (const [rotulo, blob, nome] of itensDownload) {
     const b = cria('button', 'btn', rotulo)
     b.addEventListener('click', () => baixar(blob, nome))
     areaDownloads.append(b)
   }
   painelDownloads.classList.remove('oculto')
 
-  // preview 2D — a cor resolvida que vai sair impressa
-  canvas2d.classList.remove('oculto')
-  desenharPreview2D(canvas2d, res.preview)
+  // preview 2D — a cor resolvida que vai sair impressa (mesma do ao vivo)
+  ultimaPreview = res.preview
+  desenhaPreview2d(res.preview)
 
   // preview 3D — recria o visualizador a cada resultado novo
   if (visualizador) {
@@ -553,11 +841,16 @@ const mostraResultado = (res: GenerateResult): void => {
     visualizador = null
   }
   container3d.replaceChildren()
+  container3d.classList.remove('oculto')
+  estadoVazio3d.classList.add('oculto')
   visualizador = criarVisualizador3D(container3d)
   visualizador.mostrar(res.mesh)
-  vazio.remove()
-
-  painelPreviews.scrollIntoView({ behavior: 'smooth', block: 'start' })
 }
 
+// ------------------------------------------------------------- bootstrap
+
 atualizaGerar()
+atualizaEstadoVazio()
+atualizaDificuldade()
+atualizaLimitesSliderPecas()
+atualizaPaleta()

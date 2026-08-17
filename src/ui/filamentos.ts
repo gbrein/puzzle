@@ -1,30 +1,47 @@
-import type { Filament } from '../color/types.ts'
+import type { Filament, LayerPlan, RGB } from '../color/types.ts'
 import { FILAMENTS, RESSALVAS } from '../filaments/db.ts'
+import { buildPalette } from '../color/beer-lambert.ts'
+import { parseHex, rgbToLab, toHex } from '../color/space.ts'
+import './filamentos.css'
 
 /**
- * Monta o seletor de filamentos — o controle central da UI.
+ * Seletor de filamentos — escolher cor, não nome de rolo.
  *
- * Uma lista do catálogo (`FILAMENTS`) com amostra da cor, multi-seleção
- * ordenável (a ordem escolhida é a ordem em que os rolos entram no cronograma
- * de trocas), e um formulário de rolo manual (hex + TD) para quem usa um rolo
- * fora do catálogo. Itens com `estimated: true` ganham um selo de aviso.
+ * Grade de amostras grandes **ordenada por matiz** (H, depois L, via Lab),
+ * busca por texto, e cada amostra mostra a **rampa real** do filamento
+ * empilhado em 1/2/4/8 camadas sobre a base atual — é o que revela que dois
+ * vermelhos com TD 0,3 e 3,3 se comportam de forma completamente diferente.
+ * A rampa custa ~0 ms (`buildPalette`), então pode ser calculada na hora.
  *
- * O array `estado` é mutado in place e `aoMudar` avisa quem chamou depois de
- * cada mudança — o seletor re-renderiza sozinho.
+ * Mantém a assinatura `{ container, estado, aoMudar }` — a lane B chama por ela.
  */
+
+// Altura de camada fixa e representativa para a rampa (o default da UI). O
+// comportamento qualitativo do TD não depende do valor exato; usar uma
+// constante mantém as amostras comparáveis entre si.
+const RAMPA_LAYER_HEIGHT = 0.16
+const RAMPA_CAMADAS = [1, 2, 4, 8] as const
+const RAMPA_TOPO = RAMPA_CAMADAS[RAMPA_CAMADAS.length - 1]
+
+// Base de referência enquanto nenhum filamento estiver selecionado. O td aqui
+// é irrelevante — a base é opaca, o `buildPalette` nunca usa o td dela.
+const BASE_REFERENCIA: Filament = {
+  id: 'ref-cinza-medio',
+  name: 'cinza médio (referência)',
+  hex: '#8C8C8C',
+  td: 5,
+}
+
 export function montarFilamentos(opts: {
   container: HTMLElement
   estado: Filament[]
   aoMudar: () => void
 }): void {
   const { container, estado, aoMudar } = opts
-  // Rolos fora do catálogo adicionados pela pessoa — sobrevivem a desmarcar,
-  // para poder reescolher sem digitar de novo.
   const manuais: Filament[] = []
+  let busca = ''
 
   const indice = (id: string): number => estado.findIndex((f) => f.id === id)
-
-  let detalhes: HTMLDetailsElement | null = null
 
   const selecionar = (f: Filament): void => {
     const i = indice(f.id)
@@ -42,11 +59,53 @@ export function montarFilamentos(opts: {
     mudou()
   }
 
-  const tdTexto = (td: number): string => `${td.toFixed(1).replace('.', ',')} mm`
+  const baseAtual = (): Filament => estado[0] ?? BASE_REFERENCIA
+
+  /** Cor vista após 1, 2, 4 e 8 camadas do filamento sobre a base atual. */
+  const rampaDo = (f: Filament): RGB[] => {
+    const plan: LayerPlan = {
+      layerHeight: RAMPA_LAYER_HEIGHT,
+      baseLayers: 1,
+      base: baseAtual(),
+      schedule: Array.from({ length: RAMPA_TOPO }, () => f),
+    }
+    const palette = buildPalette(plan)
+    return RAMPA_CAMADAS.map((k) => palette[k])
+  }
+
+  const matiz = (c: RGB): number => {
+    const [, a, b] = rgbToLab(c)
+    const h = (Math.atan2(b, a) * 180) / Math.PI
+    return h < 0 ? h + 360 : h
+  }
+
+  const luminosidade = (c: RGB): number => rgbToLab(c)[0]
+
+  // Recalculado a cada render, e não uma vez só: `manuais` cresce quando alguém
+  // cadastra um rolo, e uma lista congelada na partida deixaria o rolo novo
+  // fora da grade para sempre.
+  const ordenadas = (): Filament[] =>
+    [...FILAMENTS, ...manuais].sort((x, y) => {
+      const hx = matiz(parseHex(x.hex))
+      const hy = matiz(parseHex(y.hex))
+      if (hx !== hy) return hx - hy
+      return luminosidade(parseHex(x.hex)) - luminosidade(parseHex(y.hex))
+    })
+
+  // Busca sem diferenciar maiúsculas nem acentos: "aze" acha "Azul".
+  const normaliza = (s: string): string => s.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+
+  const visiveis = (): Filament[] => {
+    const todas = ordenadas()
+    if (!busca) return todas
+    const alvo = normaliza(busca)
+    return todas.filter((f) => normaliza(f.name).includes(alvo))
+  }
 
   const botaoChip = (rotulo: string, titulo: string, acao: () => void, desabilitado: boolean): HTMLButtonElement => {
     const b = document.createElement('button')
     b.type = 'button'
+    b.className = 'fil-btn-chip'
     b.textContent = rotulo
     b.title = titulo
     b.disabled = desabilitado
@@ -54,197 +113,143 @@ export function montarFilamentos(opts: {
     return b
   }
 
-  const linhaSelecionado = (f: Filament, i: number): HTMLLIElement => {
+  const chipDe = (f: Filament, i: number): HTMLLIElement => {
     const li = document.createElement('li')
-    li.className = 'chip'
+    li.className = 'fil-chip'
 
     const pos = document.createElement('span')
-    pos.className = 'pos'
+    pos.className = 'fil-chip-pos'
     pos.textContent = `${i + 1}º`
 
-    const amostra = document.createElement('span')
-    amostra.className = 'amostra'
-    amostra.style.backgroundColor = f.hex
+    const swatch = document.createElement('span')
+    swatch.className = 'fil-chip-swatch'
+    swatch.style.backgroundColor = f.hex
 
     const nome = document.createElement('span')
-    nome.className = 'nome'
+    nome.className = 'fil-chip-nome'
     nome.textContent = f.name
     nome.title = f.name
 
     const td = document.createElement('span')
-    td.className = 'td'
-    td.textContent = tdTexto(f.td)
+    td.className = 'fil-chip-td'
+    td.textContent = `TD ${f.td.toFixed(1).replace('.', ',')} mm`
 
     const acoes = document.createElement('span')
-    acoes.className = 'acoes'
+    acoes.className = 'fil-chip-acoes'
     acoes.append(
       botaoChip('↑', `Sobe ${f.name}`, () => mover(f.id, -1), i === 0),
       botaoChip('↓', `Desce ${f.name}`, () => mover(f.id, 1), i === estado.length - 1),
       botaoChip('✕', `Remove ${f.name}`, () => selecionar(f), false),
     )
 
-    li.append(pos, amostra, nome, td, acoes)
+    li.append(pos, swatch, nome, td, acoes)
+
+    if (i === 0) {
+      const selo = document.createElement('span')
+      selo.className = 'fil-base-selo'
+      selo.textContent = 'base'
+      selo.title = 'Primeiro da ordem — vira a base opaca da peça.'
+      li.append(selo)
+    }
     return li
   }
 
-  const linhaCatalogo = (f: Filament): HTMLButtonElement => {
+  const cardAmostra = (f: Filament): HTMLButtonElement => {
     const ativo = indice(f.id) !== -1
-    const b = document.createElement('button')
-    b.type = 'button'
-    b.className = 'filamento-opt' + (ativo ? ' ativo' : '')
-    b.title = f.name
+    const btn = document.createElement('button')
+    btn.type = 'button'
+    btn.className = 'fil-amostra' + (ativo ? ' ativo' : '')
 
-    const amostra = document.createElement('span')
-    amostra.className = 'amostra'
-    amostra.style.backgroundColor = f.hex
+    const base = baseAtual()
+    btn.title = `${f.name} · TD ${f.td} mm
+Rampa sobre ${base.name} (${base.hex}) em 1/2/4/8 camadas`
+
+    const swatch = document.createElement('span')
+    swatch.className = 'fil-swatch'
+    swatch.style.backgroundColor = f.hex
+
+    const rampa = document.createElement('span')
+    rampa.className = 'fil-rampa'
+    rampaDo(f).forEach((cor, k) => {
+      const cel = document.createElement('span')
+      cel.className = 'fil-rampa-celula'
+      cel.style.backgroundColor = toHex(cor)
+      cel.title = `${RAMPA_CAMADAS[k]} camada(s) → ${toHex(cor)}`
+      rampa.append(cel)
+    })
 
     const nome = document.createElement('span')
-    nome.className = 'nome'
+    nome.className = 'fil-amostra-nome'
     nome.textContent = f.name
+
+    btn.append(swatch, rampa, nome)
 
     if (f.estimated) {
       const selo = document.createElement('span')
-      selo.className = 'badge-estimado'
+      selo.className = 'fil-badge-estimado'
       selo.textContent = 'estimado'
       selo.title = 'Cor e TD são estimativa, não medição própria.'
-      b.append(amostra, nome, selo)
-    } else {
-      b.append(amostra, nome)
+      btn.append(selo)
     }
-
-    const td = document.createElement('span')
-    td.className = 'td'
-    td.textContent = tdTexto(f.td)
-    b.append(td)
 
     const ressalva = RESSALVAS[f.id]
-    if (ressalva) b.title = `${f.name} — ${ressalva}`
+    if (ressalva) btn.title = `${f.name} — ${ressalva}\n${btn.title}`
 
     const check = document.createElement('span')
-    check.className = 'check'
-    check.textContent = ativo ? '✓' : ''
-    b.append(check)
+    check.className = 'fil-amostra-check'
+    check.textContent = '✓'
+    btn.append(check)
 
-    b.addEventListener('click', () => selecionar(f))
-    return b
+    btn.addEventListener('click', () => selecionar(f))
+    return btn
   }
 
-  const render = (): void => {
-    container.replaceChildren()
+  const formularioManual = (): HTMLDetailsElement => {
+    const detalhes = document.createElement('details')
+    detalhes.className = 'fil-manual'
+    const sumario = document.createElement('summary')
+    sumario.textContent = 'Rolo fora do catálogo?'
+    detalhes.append(sumario)
 
-    const lista = document.createElement('ol')
-    lista.className = 'lista-selecionados'
-    if (estado.length === 0) {
-      const li = document.createElement('li')
-      li.className = 'chip'
-      li.textContent = 'Nenhum filamento escolhido — selecione abaixo ou adicione um rolo manual.'
-      li.style.opacity = '0.75'
-      lista.append(li)
-    } else {
-      estado.forEach((f, i) => lista.append(linhaSelecionado(f, i)))
-    }
-    container.append(lista)
-
-    if (manuais.length > 0) {
-      const titulo = document.createElement('p')
-      titulo.className = 'titulo-secao'
-      titulo.textContent = 'Meus rolos'
-      container.append(titulo)
-      const grade = document.createElement('div')
-      grade.className = 'grade-filamentos'
-      manuais.forEach((f) => grade.append(linhaCatalogo(f)))
-      container.append(grade)
-    }
-
-    const titulo = document.createElement('p')
-    titulo.className = 'titulo-secao'
-    titulo.textContent = 'Catálogo'
-    container.append(titulo)
-    const grade = document.createElement('div')
-    grade.className = 'grade-filamentos'
-    FILAMENTS.forEach((f) => grade.append(linhaCatalogo(f)))
-    container.append(grade)
-
-    // O formulário do rolo manual é construído UMA vez e reaproveitado: refazê-lo
-    // a cada render fecharia o <details> e apagaria o hex/TD já digitados no meio
-    // do preenchimento. `replaceChildren` tira o nó do container mas a referência
-    // sobrevive com o estado intacto.
-    if (!detalhes) {
-      detalhes = document.createElement('details')
-      const sumario = document.createElement('summary')
-      sumario.textContent = 'Rolo fora do catálogo?'
-      detalhes.append(sumario, formularioManual())
-    }
-    container.append(detalhes)
-  }
-
-  /**
-   * Ponto único por onde toda mutação do estado passa. Redesenhar aqui, e não em
-   * cada chamador, é o que garante que a lista de selecionados, a ordem e os
-   * "Meus rolos" acompanhem o que a pessoa clicou.
-   */
-  const mudou = (): void => {
-    render()
-    aoMudar()
-  }
-
-  const formularioManual = (): HTMLDivElement => {
     const form = document.createElement('div')
-    form.className = 'manual-form'
-
+    form.className = 'fil-manual-form'
     const linha = document.createElement('div')
-    linha.className = 'linha'
+    linha.className = 'fil-manual-linha'
 
     const grupoNome = document.createElement('div')
-    grupoNome.className = 'grupo'
-    const labelNome = document.createElement('label')
-    labelNome.textContent = 'Nome (opcional)'
+    grupoNome.className = 'fil-grupo'
+    const rotuloNome = document.createElement('span')
+    rotuloNome.textContent = 'Nome (opcional)'
     const inputNome = document.createElement('input')
     inputNome.type = 'text'
     inputNome.placeholder = 'Ex.: PETG azul da marca X'
-    grupoNome.append(labelNome, inputNome)
+    grupoNome.append(rotuloNome, inputNome)
 
     const grupoCor = document.createElement('div')
-    grupoCor.className = 'grupo'
-    const labelCor = document.createElement('label')
-    labelCor.textContent = 'Cor'
-    const linhaCor = document.createElement('div')
-    linhaCor.className = 'linha'
-    linhaCor.style.gridTemplateColumns = 'auto 1fr'
+    grupoCor.className = 'fil-grupo'
+    const rotuloCor = document.createElement('span')
+    rotuloCor.textContent = 'Cor'
     const inputCor = document.createElement('input')
     inputCor.type = 'color'
     inputCor.value = '#d9d4c4'
-    const inputHex = document.createElement('input')
-    inputHex.type = 'text'
-    inputHex.value = '#D9D4C4'
-    inputHex.maxLength = 7
-    inputHex.spellcheck = false
-    inputCor.addEventListener('input', () => {
-      inputHex.value = inputCor.value
-    })
-    inputHex.addEventListener('input', () => {
-      const h = normalizaHex(inputHex.value)
-      if (h) inputCor.value = h
-    })
-    linhaCor.append(inputCor, inputHex)
-    grupoCor.append(labelCor, linhaCor)
+    grupoCor.append(rotuloCor, inputCor)
 
     const grupoTd = document.createElement('div')
-    grupoTd.className = 'grupo'
-    const labelTd = document.createElement('label')
-    labelTd.textContent = 'TD (mm)'
+    grupoTd.className = 'fil-grupo'
+    const rotuloTd = document.createElement('span')
+    rotuloTd.textContent = 'TD (mm)'
     const inputTd = document.createElement('input')
     inputTd.type = 'number'
     inputTd.min = '0.1'
     inputTd.step = '0.1'
     inputTd.value = '3.0'
-    grupoTd.append(labelTd, inputTd)
+    grupoTd.append(rotuloTd, inputTd)
 
     const grupoBotao = document.createElement('div')
-    grupoBotao.className = 'grupo'
+    grupoBotao.className = 'fil-grupo'
     const botao = document.createElement('button')
     botao.type = 'button'
-    botao.className = 'btn btn-primario'
+    botao.className = 'fil-btn fil-btn-primario'
     botao.textContent = 'Adicionar'
     grupoBotao.append(botao)
 
@@ -252,24 +257,16 @@ export function montarFilamentos(opts: {
     form.append(linha)
 
     const erro = document.createElement('p')
-    erro.className = 'erro-form'
+    erro.className = 'fil-erro-form'
     erro.style.display = 'none'
     form.append(erro)
 
-    const falhar = (msg: string): void => {
-      erro.textContent = msg
-      erro.style.display = ''
-    }
-
     botao.addEventListener('click', () => {
-      const hex = normalizaHex(inputHex.value)
-      if (!hex) {
-        falhar('Cor inválida — use #RRGGBB.')
-        return
-      }
+      const hex = inputCor.value
       const td = Number(inputTd.value)
       if (!Number.isFinite(td) || td <= 0) {
-        falhar('TD precisa ser um número positivo, em mm.')
+        erro.textContent = 'TD precisa ser um número positivo, em mm.'
+        erro.style.display = ''
         return
       }
       erro.style.display = 'none'
@@ -281,13 +278,74 @@ export function montarFilamentos(opts: {
       mudou()
     })
 
-    return form
+    detalhes.append(form)
+    return detalhes
   }
 
-  const normalizaHex = (v: string): string | null => {
-    const m = v.trim().replace(/^#?/, '').match(/^([0-9a-fA-F]{6})$/)
-    return m ? `#${m[1].toUpperCase()}` : null
+  // DOM fixo fora do render — recriar a busca a cada tecla faria o input perder
+  // o foco a cada caractere digitado.
+  const raiz = document.createElement('div')
+  raiz.className = 'fil-seletor'
+
+  const dica = document.createElement('p')
+  dica.className = 'fil-dica'
+  dica.textContent =
+    'Toque para selecionar. O primeiro da ordem vira a base — a rampa de cada amostra ' +
+    'mostra o filamento empilhado em 1/2/4/8 camadas sobre ela.'
+
+  const buscaInput = document.createElement('input')
+  buscaInput.type = 'search'
+  buscaInput.className = 'fil-busca'
+  buscaInput.placeholder = 'Buscar por nome…'
+  buscaInput.addEventListener('input', () => {
+    busca = buscaInput.value
+    render()
+  })
+
+  const chips = document.createElement('ol')
+  chips.className = 'fil-lista-selecionados'
+
+  const grade = document.createElement('div')
+  grade.className = 'fil-grade'
+
+  raiz.append(dica, buscaInput, chips, grade, formularioManual())
+
+  const render = (): void => {
+    chips.replaceChildren()
+    grade.replaceChildren()
+
+    if (estado.length === 0) {
+      const li = document.createElement('li')
+      li.className = 'fil-chip'
+      li.style.opacity = '0.7'
+      li.textContent = 'Nenhum filamento escolhido ainda.'
+      chips.append(li)
+    } else {
+      estado.forEach((f, i) => chips.append(chipDe(f, i)))
+    }
+
+    const mostraveis = visiveis()
+    if (mostraveis.length === 0) {
+      const vazio = document.createElement('p')
+      vazio.className = 'fil-busca-vazia'
+      vazio.textContent = 'Nenhum filamento encontrado para essa busca.'
+      grade.append(vazio)
+    } else {
+      mostraveis.forEach((f) => grade.append(cardAmostra(f)))
+    }
   }
 
+  /**
+   * Ponto único por onde toda mutação do estado passa. Redesenhar aqui, e não em
+   * cada chamador, é o que garante que a lista de escolhidos, a ordem, a marca de
+   * "base" e as rampas (que dependem da base) acompanhem o clique. Sem isto, a
+   * pessoa clica numa amostra e nada muda na tela.
+   */
+  function mudou(): void {
+    render()
+    aoMudar()
+  }
+
+  container.replaceChildren(raiz)
   render()
 }
