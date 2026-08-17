@@ -275,3 +275,49 @@ test('mesma semente e mesma foto dão exatamente o mesmo arquivo', () => {
   assert.deepEqual(a.threemf, b.threemf)
   assert.notDeepEqual(a.threemf, generatePuzzle({ ...BASE, seed: 99 }).threemf)
 })
+
+test('o mapa de montagem cobre toda peça exatamente uma vez, e cabe numa placa só', () => {
+  const r = generatePuzzle(BASE)
+  assert.equal(r.placement.length, r.stats.pieces)
+  assert.equal(new Set(r.placement.map((p) => `${p.row},${p.col}`)).size, r.stats.pieces)
+  assert.equal(r.stats.plates, 1, 'a placa do teste é pequena — cabe numa mesa só por default')
+})
+
+test('mesa pequena força o auto plate split, e o .3mf ganha um <plate> por placa', () => {
+  const r = generatePuzzle({ ...BASE, bedWidth: 45, bedHeight: 45 })
+  assert.ok(r.stats.plates > 1, `esperava mais de uma placa, veio ${r.stats.plates}`)
+  assert.equal(new Set(r.placement.map((p) => p.plate)).size, r.stats.plates)
+
+  const ms = new TextDecoder().decode(unzipSync(r.threemf)['Metadata/model_settings.config'])
+  assert.equal((ms.match(/<plate>/g) ?? []).length, r.stats.plates)
+  const cg = new TextDecoder().decode(unzipSync(r.threemf)['Metadata/custom_gcode_per_layer.xml'])
+  assert.equal((cg.match(/<plate>/g) ?? []).length, r.stats.plates)
+})
+
+test('frame: true acrescenta a moldura como objeto extra, na própria placa, sem trocas', () => {
+  const sem = generatePuzzle(BASE)
+  const com = generatePuzzle({ ...BASE, frame: true })
+
+  assert.equal(com.stats.plates, sem.stats.plates + 1, 'a moldura ganha uma placa própria')
+  assert.ok(com.stats.grams > sem.stats.grams, 'a moldura tem que somar massa')
+  // a geometria das peças não muda — só ganha um objeto a mais
+  assert.equal(com.stats.triangles, sem.stats.triangles)
+
+  const model = new TextDecoder().decode(unzipSync(com.threemf)['3D/3dmodel.model'])
+  const nomes = [...model.matchAll(/<object id="\d+" type="model" name="([^"]*)"/g)].map((m) => m[1])
+  assert.equal(nomes.filter((n) => n === 'moldura').length, 1)
+  assert.equal(nomes.length, sem.stats.pieces + 1)
+
+  // a placa da moldura não tem troca de cor nenhuma — ela não tem relevo
+  const cg = new TextDecoder().decode(unzipSync(com.threemf)['Metadata/custom_gcode_per_layer.xml'])
+  const blocos = cg.split('<plate>').slice(1)
+  assert.equal(blocos.length, com.stats.plates)
+  assert.equal((blocos[blocos.length - 1].match(/<layer /g) ?? []).length, 0, 'a placa da moldura não devia ter trocas')
+})
+
+test('moldura maior que a mesa é erro explícito, não um .3mf cortado', () => {
+  assert.throws(
+    () => generatePuzzle({ ...BASE, frame: true, bedWidth: 45, bedHeight: 45 }),
+    /moldura de .*não cabe na mesa/,
+  )
+})

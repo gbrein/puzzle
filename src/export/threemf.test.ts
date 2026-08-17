@@ -22,17 +22,18 @@ const FIRST = 0.2
 /** Topo da camada k+1 — a MESMA conta que o writer valida. */
 const z = (k: number) => FIRST + k * LAYER
 
+const TROCAS = [
+  { topZ: z(3), extruder: 2, color: '#FFFFFF' },
+  { topZ: z(8), extruder: 3, color: '#0F62FE' },
+  { topZ: z(15), extruder: 1, color: '#000000' },
+]
+
 const base = (): ProjectOptions => ({
-  objects: [{ name: 'peca-1', mesh: cubo() }],
+  plates: [{ objects: [{ name: 'peca-1', mesh: cubo() }], colorChanges: TROCAS.map((c) => ({ ...c })) }],
   filaments: [
     { color: '#000000', type: 'PLA' },
     { color: '#FFFFFF', type: 'PLA' },
     { color: '#0F62FE', type: 'PETG' },
-  ],
-  colorChanges: [
-    { topZ: z(3), extruder: 2, color: '#FFFFFF' },
-    { topZ: z(8), extruder: 3, color: '#0F62FE' },
-    { topZ: z(15), extruder: 1, color: '#000000' },
   ],
   printerModel: 'Bambu Lab X1C',
   layerHeight: LAYER,
@@ -112,7 +113,9 @@ test('sem o Application "BambuStudio-" o slicer descarta config e trocas', () =>
 
 test('a malha indexada vai direto pro XML, vértice a vértice e índice a índice', () => {
   const m = cubo()
-  const { txt } = abrir({ ...base(), objects: [{ name: 'c', mesh: m }] })
+  const o = base()
+  o.plates = [{ objects: [{ name: 'c', mesh: m }], colorChanges: o.plates[0].colorChanges }]
+  const { txt } = abrir(o)
   const model = txt('3D/3dmodel.model')
 
   const verts = tags(model, 'vertex')
@@ -145,13 +148,12 @@ test('modo manual: toda troca vira pausa num projeto de UM filamento', () => {
   const { txt } = abrir(o)
   const cg = txt('Metadata/custom_gcode_per_layer.xml')
   const layers = tags(cg, 'layer')
+  const trocas = o.plates[0].colorChanges
 
-  assert.equal(layers.length, o.colorChanges.length)
+  assert.equal(layers.length, trocas.length)
   // 1e-6 é a resolução do formato (6 casas), não folga: erra uma camada inteira
   // quem escrever o top_z errado
-  layers.forEach((l, i) =>
-    assert.ok(Math.abs(Number(l.top_z) - o.colorChanges[i].topZ) < 1e-6, `top_z ${l.top_z} da troca ${i}`),
-  )
+  layers.forEach((l, i) => assert.ok(Math.abs(Number(l.top_z) - trocas[i].topZ) < 1e-6, `top_z ${l.top_z} da troca ${i}`))
   for (const l of layers) {
     assert.equal(l.type, '1', 'type=1 é PausePrint; 0 (ColorChange) é código morto e 2 exige AMS')
     assert.equal(l.extruder, '1')
@@ -175,12 +177,13 @@ test('modo ams: troca vira ToolChange com o palette inteiro declarado', () => {
   const { txt } = abrir(o)
   const cg = txt('Metadata/custom_gcode_per_layer.xml')
   const layers = tags(cg, 'layer')
+  const trocas = o.plates[0].colorChanges
 
   assert.deepEqual(
     layers.map((l) => [Number(l.extruder), l.color, l.type, l.gcode]),
-    o.colorChanges.map((c) => [c.extruder, c.color, '2', 'tool_change']),
+    trocas.map((c) => [c.extruder, c.color, '2', 'tool_change']),
   )
-  layers.forEach((l, i) => assert.ok(Math.abs(Number(l.top_z) - o.colorChanges[i].topZ) < 1e-6))
+  layers.forEach((l, i) => assert.ok(Math.abs(Number(l.top_z) - trocas[i].topZ) < 1e-6))
   for (const l of layers) assert.equal(l.extra, '')
   // MultiAsSingle é condição necessária: fora dele o slicer ignora ToolChange
   assert.equal(tags(cg, 'mode')[0].value, 'MultiAsSingle')
@@ -210,7 +213,7 @@ test('todo valor do project_settings é string ou array de strings', () => {
 
 test('nome de objeto com & e < sai escapado', () => {
   const o = base()
-  o.objects = [{ name: 'peça <A> & "B" \'c\'', mesh: cubo() }]
+  o.plates = [{ objects: [{ name: 'peça <A> & "B" \'c\'', mesh: cubo() }], colorChanges: o.plates[0].colorChanges }]
   const { txt } = abrir(o)
   const esperado = 'peça &lt;A&gt; &amp; &quot;B&quot; &apos;c&apos;'
 
@@ -223,11 +226,16 @@ test('nome de objeto com & e < sai escapado', () => {
   }
 })
 
-test('vários objetos viram ids sequenciais', () => {
+test('vários objetos na mesma placa viram ids sequenciais', () => {
   const o = base()
-  o.objects = [
-    { name: 'a', mesh: cubo() },
-    { name: 'b', mesh: cubo() },
+  o.plates = [
+    {
+      objects: [
+        { name: 'a', mesh: cubo() },
+        { name: 'b', mesh: cubo() },
+      ],
+      colorChanges: o.plates[0].colorChanges,
+    },
   ]
   const { txt } = abrir(o)
   const model = txt('3D/3dmodel.model')
@@ -243,7 +251,10 @@ test('vários objetos viram ids sequenciais', () => {
 })
 
 test('malha inconsistente lança em vez de gerar 3mf corrompido', () => {
-  const mal = (mesh: Mesh) => () => writeProject3MF({ ...base(), objects: [{ name: 'x', mesh }] })
+  const mal = (mesh: Mesh) => () => {
+    const o = base()
+    return writeProject3MF({ ...o, plates: [{ objects: [{ name: 'x', mesh }], colorChanges: o.plates[0].colorChanges }] })
+  }
 
   assert.throws(mal({ positions: new Float32Array(0), indices: new Uint32Array(0) }), /triângulos/)
   // 4 índices: o triângulo do fim sairia com v2/v3 = undefined
@@ -271,38 +282,45 @@ test('malha inconsistente lança em vez de gerar 3mf corrompido', () => {
 })
 
 test('entradas inválidas lançam', () => {
-  assert.throws(() => writeProject3MF({ ...base(), objects: [] }), /objetos vazia/)
+  assert.throws(() => writeProject3MF({ ...base(), plates: [] }), /nenhuma placa/)
+  assert.throws(
+    () => writeProject3MF({ ...base(), plates: [{ objects: [], colorChanges: [] }] }),
+    /placa sem objeto/,
+  )
   assert.throws(() => writeProject3MF({ ...base(), filaments: [] }), /filamento/)
+
+  const comTrocas = (colorChanges: ProjectOptions['plates'][0]['colorChanges']) => {
+    const o = base()
+    return { ...o, plates: [{ objects: o.plates[0].objects, colorChanges }] }
+  }
   // extrusora 0-indexada é o erro clássico: os slots são 1-indexados
   assert.throws(
-    () => writeProject3MF({ ...base(), colorChanges: [{ topZ: z(1), extruder: 0, color: '#000000' }] }),
+    () => writeProject3MF(comTrocas([{ topZ: z(1), extruder: 0, color: '#000000' }])),
     /1\.\.3/,
   )
   assert.throws(
-    () => writeProject3MF({ ...base(), colorChanges: [{ topZ: z(1), extruder: 4, color: '#000000' }] }),
+    () => writeProject3MF(comTrocas([{ topZ: z(1), extruder: 4, color: '#000000' }])),
     /1\.\.3/,
   )
   assert.throws(
     () =>
-      writeProject3MF({
-        ...base(),
-        colorChanges: [
+      writeProject3MF(
+        comTrocas([
           { topZ: z(5), extruder: 2, color: '#000000' },
           { topZ: z(2), extruder: 3, color: '#ffffff' },
-        ],
-      }),
+        ]),
+      ),
     /top_z/,
   )
   // topo repetido também é inválido: duas trocas na mesma camada
   assert.throws(
     () =>
-      writeProject3MF({
-        ...base(),
-        colorChanges: [
+      writeProject3MF(
+        comTrocas([
           { topZ: z(5), extruder: 2, color: '#000000' },
           { topZ: z(5), extruder: 3, color: '#ffffff' },
-        ],
-      }),
+        ]),
+      ),
     /não é maior que o anterior/,
   )
   assert.throws(() => writeProject3MF({ ...base(), layerHeight: 0 }), /layerHeight/)
@@ -318,49 +336,99 @@ test('cor que não é hex lança nos dois lados', () => {
     () => writeProject3MF({ ...base(), filaments: [{ color: '#FFF', type: 'PLA' }] }),
     /não é hex/,
   )
+  const o = base()
   assert.throws(
-    () => writeProject3MF({ ...base(), colorChanges: [{ topZ: z(1), extruder: 1, color: '#GGGGGG' }] }),
+    () =>
+      writeProject3MF({
+        ...o,
+        plates: [{ objects: o.plates[0].objects, colorChanges: [{ topZ: z(1), extruder: 1, color: '#GGGGGG' }] }],
+      }),
     /cor "#GGGGGG"/,
   )
   // #RRGGBBAA é o que o Bambu escreve às vezes: tem que passar
   assert.doesNotThrow(() =>
-    writeProject3MF({ ...base(), filaments: [{ color: '#0F62FEFF', type: 'PLA' }], colorChanges: [] }),
+    writeProject3MF({
+      ...o,
+      filaments: [{ color: '#0F62FEFF', type: 'PLA' }],
+      plates: [{ objects: o.plates[0].objects, colorChanges: [] }],
+    }),
   )
 })
 
 test('top_z fora da grade de camadas lança, com o valor certo na mensagem', () => {
-  const meio = () =>
-    writeProject3MF({ ...base(), colorChanges: [{ topZ: z(3) + LAYER / 4, extruder: 2, color: '#FFFFFF' }] })
+  const comTroca = (topZ: number, overrides: Partial<ProjectOptions> = {}) => () => {
+    const o = base()
+    return writeProject3MF({
+      ...o,
+      ...overrides,
+      plates: [{ objects: o.plates[0].objects, colorChanges: [{ topZ, extruder: 2, color: '#FFFFFF' }] }],
+    })
+  }
   // um quarto de camada acima: o slicer NÃO erra, ele encaixa na camada vizinha
   // e a troca sai no lugar errado — só se descobre com a peça na mão
+  const meio = comTroca(z(3) + LAYER / 4)
   assert.throws(meio, /não cai em topo de camada/)
   assert.throws(meio, /mais próximo: 0\.56$/)
 
   // abaixo da primeira camada não existe topo nenhum — inclusive o "topo da
   // camada zero", que cai na grade mas não existe na peça
-  assert.throws(
-    () => writeProject3MF({ ...base(), colorChanges: [{ topZ: 0.1, extruder: 2, color: '#FFFFFF' }] }),
-    /não cai em topo de camada/,
-  )
-  assert.throws(
-    () => writeProject3MF({ ...base(), colorChanges: [{ topZ: FIRST - LAYER, extruder: 2, color: '#FFFFFF' }] }),
-    /não cai em topo de camada/,
-  )
+  assert.throws(comTroca(0.1), /não cai em topo de camada/)
+  assert.throws(comTroca(FIRST - LAYER), /não cai em topo de camada/)
   // exatamente a primeira camada é válido (trocar antes da camada 2)
-  assert.doesNotThrow(() =>
-    writeProject3MF({ ...base(), colorChanges: [{ topZ: FIRST, extruder: 2, color: '#FFFFFF' }] }),
-  )
+  assert.doesNotThrow(comTroca(FIRST))
   // a grade acompanha os parâmetros: com outra primeira camada, z(3) sai dela
-  assert.throws(
-    () => writeProject3MF({ ...base(), firstLayerHeight: 0.25 }),
-    /não cai em topo de camada/,
-  )
+  assert.throws(comTroca(z(3), { firstLayerHeight: 0.25 }), /não cai em topo de camada/)
 })
 
 test('sem trocas continua gerando um projeto válido', () => {
-  const { txt } = abrir({ ...base(), colorChanges: [] })
+  const o = base()
+  const { txt } = abrir({ ...o, plates: [{ objects: o.plates[0].objects, colorChanges: [] }] })
   const cg = txt('Metadata/custom_gcode_per_layer.xml')
   assert.equal(tags(cg, 'layer').length, 0)
   assert.match(cg, /<custom_gcodes_per_layer>/)
   assert.equal(tags(cg, 'mode')[0].value, 'SingleExtruder')
+})
+
+test('várias placas viram vários blocos <plate>, com ids global de objeto contínuos', () => {
+  const o = base()
+  const trocas = o.plates[0].colorChanges
+  const multi: ProjectOptions = {
+    ...o,
+    plates: [
+      { objects: [{ name: 'peca-a', mesh: cubo() }, { name: 'peca-b', mesh: cubo() }], colorChanges: trocas },
+      { objects: [{ name: 'peca-c', mesh: cubo() }], colorChanges: trocas },
+      // a moldura: uma placa própria, sem troca de cor nenhuma
+      { objects: [{ name: 'moldura', mesh: cubo() }], colorChanges: [] },
+    ],
+  }
+  const { txt } = abrir(multi)
+
+  const model = txt('3D/3dmodel.model')
+  assert.deepEqual(tags(model, 'object').map((t) => t.id), ['1', '2', '3', '4'], 'ids de objeto são globais')
+
+  const ms = txt('Metadata/model_settings.config')
+  const platesMS = ms.split('<plate>').slice(1)
+  assert.equal(platesMS.length, 3, 'esperava um bloco <plate> por placa em model_settings')
+  assert.deepEqual(
+    tags(ms, 'metadata')
+      .filter((m) => m.key === 'plater_id')
+      .map((m) => m.value),
+    ['1', '2', '3'],
+  )
+  // a placa 1 referencia os objetos 1 e 2, a 2 só o 3, a 3 só o 4 — nunca cruzado
+  const idsDaPlaca = (bloco: string) => tags(bloco, 'metadata').filter((m) => m.key === 'object_id').map((m) => m.value)
+  assert.deepEqual(idsDaPlaca(platesMS[0]), ['1', '2'])
+  assert.deepEqual(idsDaPlaca(platesMS[1]), ['3'])
+  assert.deepEqual(idsDaPlaca(platesMS[2]), ['4'])
+
+  const cg = txt('Metadata/custom_gcode_per_layer.xml')
+  const platesCG = cg.split('<plate>').slice(1)
+  assert.equal(platesCG.length, 3, 'esperava um bloco <plate> por placa em custom_gcode_per_layer')
+  assert.match(platesCG[0], /<plate_info id="1"\/>/)
+  assert.match(platesCG[1], /<plate_info id="2"\/>/)
+  assert.match(platesCG[2], /<plate_info id="3"\/>/)
+  // as duas primeiras placas repetem o MESMO cronograma; a terceira (moldura) não tem troca nenhuma
+  assert.equal(tags(platesCG[0], 'layer').length, trocas.length)
+  assert.equal(tags(platesCG[1], 'layer').length, trocas.length)
+  assert.equal(tags(platesCG[2], 'layer').length, 0)
 })

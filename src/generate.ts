@@ -9,11 +9,16 @@ import { totalHeight } from './color/types.ts'
 import { writeProject3MF } from './export/threemf.ts'
 import { toBinarySTL } from './export/stl.ts'
 import { resizeBitmap } from './image/resize.ts'
+import { layoutPlates, type PlacedPiece } from './jigsaw/plates.ts'
 import { pieceMask } from './jigsaw/mask.ts'
 import { tabEdge } from './jigsaw/tabs.ts'
+import { buildFrame } from './mesh/frame.ts'
 import { heightMapToMesh } from './mesh/heightmap.ts'
-import { concat, meshBytes, triangleCount, type Mesh } from './mesh/mesh.ts'
+import { concat, meshBytes, signedVolume, translate, triangleCount, type Mesh } from './mesh/mesh.ts'
 import { buildPuzzle } from './puzzle.ts'
+
+/** PLA: densidade típica usada pra converter volume em massa estimada. */
+const PLA_G_POR_CM3 = 1.24
 
 /**
  * As cores são ESCOLHA DE QUEM USA, não inferência nossa.
@@ -72,6 +77,12 @@ export interface GenerateOptions {
 
   swapMode?: 'manual' | 'ams'
   printerModel?: string
+
+  /** Inclui a moldura com pé de 30° como objeto extra, na própria placa. */
+  frame?: boolean
+  /** Mesa útil, em mm. Default 256×256 (X1C). */
+  bedWidth?: number
+  bedHeight?: number
 }
 
 export interface GenerateResult {
@@ -86,6 +97,8 @@ export interface GenerateResult {
   preview: Bitmap
   /** A malha final concatenada — para o preview 3D. Use direto, sem parsear o STL de volta. */
   mesh: Mesh
+  /** Peça original → placa e posição na mesa. Mesma ordem de `puzzle.pieces` (não inclui a moldura). */
+  placement: PlacedPiece[]
   stats: {
     cols: number
     rows: number
@@ -106,6 +119,10 @@ export interface GenerateResult {
      * cores mais contrastantes", em vez de deixar a pessoa descobrir imprimindo.
      */
     paletteSpan: number
+    /** Quantas placas a impressão vai precisar (peças + moldura, se pedida). */
+    plates: number
+    /** Massa estimada de filamento, em gramas: volume × 1,24 g/cm³ (PLA). */
+    grams: number
   }
 }
 
@@ -195,14 +212,52 @@ export function generatePuzzle(opts: GenerateOptions): GenerateResult {
       mesh: relevo ? concat([p.mesh, relevo]) : p.mesh,
     }
   })
+  // `mesh` continua sendo a placa MONTADA (sem empacotar em mesas separadas) —
+  // é a foto inteira, o que faz sentido pro preview 3D e pro STL de reserva.
+  // ponytail: o STL de reserva não reflete o auto plate split (pode passar da
+  // mesa se a placa for maior que ela); o .3mf multi-placa abaixo é quem sai
+  // pronto pra fatiar peça por peça. Se algum dia o STL precisar ser
+  // igualmente fatiável, gere um por placa a partir de `layout.plates`.
   const mesh = concat(objetos.map((o) => o.mesh))
 
   const { filaments: slots, colorChanges } = planToProject(plan)
 
+  // Auto plate split: cada peça sai posicionada na sua mesa (`layout.placement`
+  // está na MESMA ordem de `puzzle.pieces`/`objetos` — layoutPlates recebe os
+  // dois emparelhados e devolve o índice de placa e o deslocamento de cada um).
+  const layout = layoutPlates(
+    puzzle.pieces.map((p, i) => ({ row: p.row, col: p.col, ring: p.ring, mesh: objetos[i].mesh })),
+    { bedWidth: opts.bedWidth, bedHeight: opts.bedHeight },
+  )
+  const objetosPorPlaca: { name: string; mesh: Mesh }[][] = layout.plates.map(() => [])
+  layout.placement.forEach((p, i) => {
+    objetosPorPlaca[p.plate].push({ name: objetos[i].name, mesh: translate(objetos[i].mesh, p.dx, p.dy, 0) })
+  })
+
+  let frameMesh: Mesh | null = null
+  if (opts.frame) {
+    frameMesh = buildFrame({ plateWidth: puzzle.width, plateHeight: puzzle.height })
+    const bed = { w: opts.bedWidth ?? 256, h: opts.bedHeight ?? 256 }
+    const bbox = bboxXY(frameMesh)
+    const w = bbox.maxX - bbox.minX
+    const h = bbox.maxY - bbox.minY
+    if (w > bed.w || h > bed.h) {
+      // ponytail: a moldura é um objeto só, sem auto-split — se não couber
+      // numa mesa, a saída é reduzir borderWidth/plateWidth ou usar mesa maior.
+      throw new Error(`moldura de ${w.toFixed(1)}×${h.toFixed(1)}mm não cabe na mesa de ${bed.w}×${bed.h}mm`)
+    }
+    frameMesh = translate(frameMesh, -bbox.minX, -bbox.minY, 0)
+    objetosPorPlaca.push([{ name: 'moldura', mesh: frameMesh }])
+  }
+
   const threemf = writeProject3MF({
-    objects: objetos,
+    // as placas de peça repetem o MESMO cronograma de trocas (é a pilha de
+    // camadas que decide a cor, não a placa); a moldura, sem relevo, não troca.
+    plates: objetosPorPlaca.map((objects, i) => ({
+      objects,
+      colorChanges: opts.frame && i === objetosPorPlaca.length - 1 ? [] : colorChanges,
+    })),
     filaments: slots,
-    colorChanges,
     layerHeight,
     // `heightOf` mede em passos uniformes de layerHeight a partir de zero, e o
     // writer valida topZ contra `first + k*layer`. Se a primeira camada tiver
@@ -213,6 +268,10 @@ export function generatePuzzle(opts: GenerateOptions): GenerateResult {
     printerModel,
   })
 
+  const gramas =
+    ((objetos.reduce((s, o) => s + signedVolume(o.mesh), 0) + (frameMesh ? signedVolume(frameMesh) : 0)) / 1000) *
+    PLA_G_POR_CM3
+
   return {
     threemf,
     stl: toBinarySTL(mesh, 'puzzle'),
@@ -221,6 +280,7 @@ export function generatePuzzle(opts: GenerateOptions): GenerateResult {
     palette,
     preview,
     mesh,
+    placement: layout.placement,
     stats: {
       cols: puzzle.cols,
       rows: puzzle.rows,
@@ -234,8 +294,27 @@ export function generatePuzzle(opts: GenerateOptions): GenerateResult {
       deltaE: imageError(alvo, preview),
       totalHeightMm: totalHeight(plan),
       paletteSpan: extensaoDaPaleta(palette),
+      plates: objetosPorPlaca.length,
+      grams: gramas,
     },
   }
+}
+
+/** Caixa envolvente em XY — usada só para posicionar a moldura na mesa. */
+function bboxXY(m: Mesh): { minX: number; minY: number; maxX: number; maxY: number } {
+  let minX = Infinity
+  let minY = Infinity
+  let maxX = -Infinity
+  let maxY = -Infinity
+  for (let i = 0; i < m.positions.length; i += 3) {
+    const x = m.positions[i]
+    const y = m.positions[i + 1]
+    if (x < minX) minX = x
+    if (y < minY) minY = y
+    if (x > maxX) maxX = x
+    if (y > maxY) maxY = y
+  }
+  return { minX, minY, maxX, maxY }
 }
 
 /**

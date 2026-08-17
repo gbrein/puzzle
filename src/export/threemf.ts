@@ -34,11 +34,21 @@ export interface ColorChange {
   color: string
 }
 
-export interface ProjectOptions {
+export interface ThreeMFPlate {
   objects: ThreeMFObject[]
+  /**
+   * Trocas desta placa. Placas de peças repetem a MESMA lista (o cronograma
+   * de cor é uma propriedade da pilha de camadas, não da placa) — a moldura,
+   * sem relevo, entra com `[]`.
+   */
+  colorChanges: ColorChange[]
+}
+
+export interface ProjectOptions {
+  /** Uma placa por entrada. `plater_id` sai da posição (1-indexado). */
+  plates: ThreeMFPlate[]
   /** Palette lógico, na ordem dos slots (1-indexados nas trocas). */
   filaments: { color: string; type: string }[]
-  colorChanges: ColorChange[]
   printerModel?: string
   /** Altura das camadas acima da primeira, em mm. */
   layerHeight?: number
@@ -174,31 +184,42 @@ function writeModel(objects: ThreeMFObject[]): Uint8Array {
   return s.bytes()
 }
 
-function modelSettings(objects: ThreeMFObject[]): string {
-  const objs = objects
-    .map(
-      (o, n) =>
-        ` <object id="${n + 1}">\n` +
-        `  <metadata key="name" value="${escapeXML(o.name)}"/>\n` +
-        // extruder 1 pro objeto inteiro: a cor vem das trocas por camada, não do objeto.
-        `  <metadata key="extruder" value="1"/>\n </object>`,
+/**
+ * `<object>` é um recurso GLOBAL do arquivo (um id por objeto, em toda a
+ * malha) — mas o `<plate>` que o contém é local a cada placa: só lista os
+ * `object_id` que imprimem ali. É essa membership, não a posição bruta dos
+ * vértices, que diz ao slicer o que vai em qual placa; por isso cada placa
+ * pode reusar coordenadas parecidas (cada peça já entra deslocada pro seu
+ * canto da mesa por `layoutPlates`, mas dentro da MESMA faixa 0..bedWidth).
+ */
+function modelSettings(plates: ThreeMFPlate[]): string {
+  const objs: string[] = []
+  const plateBlocks: string[] = []
+  let id = 0
+  for (let p = 0; p < plates.length; p++) {
+    const instances: string[] = []
+    for (const o of plates[p].objects) {
+      id++
+      objs.push(
+        ` <object id="${id}">\n` +
+          `  <metadata key="name" value="${escapeXML(o.name)}"/>\n` +
+          // extruder 1 pro objeto inteiro: a cor vem das trocas por camada, não do objeto.
+          `  <metadata key="extruder" value="1"/>\n </object>`,
+      )
+      instances.push(
+        `  <model_instance>\n   <metadata key="object_id" value="${id}"/>\n` +
+          `   <metadata key="instance_id" value="0"/>\n  </model_instance>`,
+      )
+    }
+    plateBlocks.push(
+      ` <plate>\n  <metadata key="plater_id" value="${p + 1}"/>\n  <metadata key="plater_name" value=""/>\n` +
+        `${instances.join('\n')}\n </plate>`,
     )
-    .join('\n')
-  const instances = objects
-    .map(
-      (_, n) =>
-        `  <model_instance>\n   <metadata key="object_id" value="${n + 1}"/>\n` +
-        `   <metadata key="instance_id" value="0"/>\n  </model_instance>`,
-    )
-    .join('\n')
+  }
   return `<?xml version="1.0" encoding="UTF-8"?>
 <config>
-${objs}
- <plate>
-  <metadata key="plater_id" value="1"/>
-  <metadata key="plater_name" value=""/>
-${instances}
- </plate>
+${objs.join('\n')}
+${plateBlocks.join('\n')}
 </config>
 `
 }
@@ -207,33 +228,36 @@ ${instances}
  * Os seis atributos do `<layer>` são todos obrigatórios: o importador lê cada
  * um com `get<T>()` sem default, e um atributo faltando derruba o load inteiro
  * por exceção. `extra` vazio em especial — era o que faltava e travava tudo.
+ *
+ * Um `<plate>` por placa: cada uma é uma impressão separada, então cada uma
+ * carrega sua própria lista de trocas (placas de peça repetem a mesma lista;
+ * a moldura, sem relevo, entra com `colorChanges: []` e nenhum `<layer>`).
  */
-function customGcode(changes: ColorChange[], manual: boolean): string {
-  const layers = changes
-    .map((c) => {
-      const type = manual ? 1 : 2
-      const extruder = manual ? 1 : c.extruder
-      // no modo manual a cor não tem para onde ir: o projeto tem um filamento
-      // só. Atributo vazio é o que o Bambu escreve para pausa; pôr um hex aqui
-      // só confunde quem for depurar (no formato legado `color` era a mensagem).
-      const color = manual ? '' : c.color
-      const gcode = manual ? PAUSE_GCODE : 'tool_change'
-      return (
-        `  <layer top_z="${num(c.topZ)}" type="${type}" extruder="${extruder}"` +
-        ` color="${color}" extra="" gcode="${gcode}"/>`
-      )
-    })
-    .join('\n')
-  // `mode` fica dentro do <plate>, depois dos <layer>. MultiAsSingle é condição
-  // necessária pro slicer processar ToolChange; pra pausa é decorativo.
+function customGcode(plates: ThreeMFPlate[], manual: boolean): string {
   const mode = manual ? 'SingleExtruder' : 'MultiAsSingle'
+  const blocks = plates.map((plate, p) => {
+    const layers = plate.colorChanges
+      .map((c) => {
+        const type = manual ? 1 : 2
+        const extruder = manual ? 1 : c.extruder
+        // no modo manual a cor não tem para onde ir: o projeto tem um filamento
+        // só. Atributo vazio é o que o Bambu escreve para pausa; pôr um hex aqui
+        // só confunde quem for depurar (no formato legado `color` era a mensagem).
+        const color = manual ? '' : c.color
+        const gcode = manual ? PAUSE_GCODE : 'tool_change'
+        return (
+          `  <layer top_z="${num(c.topZ)}" type="${type}" extruder="${extruder}"` +
+          ` color="${color}" extra="" gcode="${gcode}"/>`
+        )
+      })
+      .join('\n')
+    // `mode` fica dentro do <plate>, depois dos <layer>. MultiAsSingle é condição
+    // necessária pro slicer processar ToolChange; pra pausa é decorativo.
+    return ` <plate>\n  <plate_info id="${p + 1}"/>\n${layers ? layers + '\n' : ''}  <mode value="${mode}"/>\n </plate>`
+  })
   return `<?xml version="1.0" encoding="UTF-8"?>
 <custom_gcodes_per_layer>
- <plate>
-  <plate_info id="1"/>
-${layers}
-  <mode value="${mode}"/>
- </plate>
+${blocks.join('\n')}
 </custom_gcodes_per_layer>
 `
 }
@@ -262,9 +286,13 @@ function validarMalha(nome: string, m: Mesh): void {
 
 /** Escreve o .3mf de projeto: malha + filamentos + trocas por camada, pronto pro Bambu Studio / OrcaSlicer. */
 export function writeProject3MF(o: ProjectOptions): Uint8Array {
-  if (o.objects.length === 0) throw new Error('3mf: lista de objetos vazia')
+  if (o.plates.length === 0) throw new Error('3mf: nenhuma placa')
+  for (const plate of o.plates) {
+    if (plate.objects.length === 0) throw new Error('3mf: placa sem objeto nenhum')
+  }
+  const objects = o.plates.flatMap((p) => p.objects)
+  for (const obj of objects) validarMalha(obj.name, obj.mesh)
   if (o.filaments.length === 0) throw new Error('3mf: nenhum filamento declarado')
-  for (const obj of o.objects) validarMalha(obj.name, obj.mesh)
   for (const f of o.filaments) {
     if (!HEX.test(f.color)) throw new Error(`3mf: cor de filamento "${f.color}" não é hex #RRGGBB`)
   }
@@ -276,27 +304,31 @@ export function writeProject3MF(o: ProjectOptions): Uint8Array {
 
   const manual = (o.swapMode ?? 'manual') === 'manual'
 
-  let anterior = -Infinity
-  for (const c of o.colorChanges) {
-    if (!Number.isInteger(c.extruder) || c.extruder < 1 || c.extruder > o.filaments.length) {
-      throw new Error(
-        `3mf: extrusora ${c.extruder} fora do intervalo 1..${o.filaments.length} (slots são 1-indexados)`,
-      )
+  // top_z só precisa crescer DENTRO da mesma placa — são impressões separadas,
+  // então placas repetindo o mesmo cronograma (o caso normal) é esperado.
+  for (const plate of o.plates) {
+    let anterior = -Infinity
+    for (const c of plate.colorChanges) {
+      if (!Number.isInteger(c.extruder) || c.extruder < 1 || c.extruder > o.filaments.length) {
+        throw new Error(
+          `3mf: extrusora ${c.extruder} fora do intervalo 1..${o.filaments.length} (slots são 1-indexados)`,
+        )
+      }
+      if (!HEX.test(c.color)) throw new Error(`3mf: cor "${c.color}" da troca em ${c.topZ} não é hex #RRGGBB`)
+      if (!(c.topZ > anterior)) throw new Error(`3mf: top_z ${c.topZ} não é maior que o anterior ${anterior}`)
+      // O topo da camada k é first + (k-1)*layer. Um top_z fora dessa grade não
+      // dá erro no slicer: ele encaixa na camada mais próxima e a troca sai numa
+      // camada diferente da pedida — defeito que só aparece com a peça na mão.
+      const k = Math.round((c.topZ - firstLayerHeight) / layerHeight)
+      if (k < 0 || Math.abs(firstLayerHeight + k * layerHeight - c.topZ) > 1e-6) {
+        const perto = firstLayerHeight + Math.max(0, k) * layerHeight
+        throw new Error(
+          `3mf: top_z ${c.topZ} não cai em topo de camada` +
+            ` (grade ${firstLayerHeight} + k*${layerHeight}); mais próximo: ${num(perto)}`,
+        )
+      }
+      anterior = c.topZ
     }
-    if (!HEX.test(c.color)) throw new Error(`3mf: cor "${c.color}" da troca em ${c.topZ} não é hex #RRGGBB`)
-    if (!(c.topZ > anterior)) throw new Error(`3mf: top_z ${c.topZ} não é maior que o anterior ${anterior}`)
-    // O topo da camada k é first + (k-1)*layer. Um top_z fora dessa grade não
-    // dá erro no slicer: ele encaixa na camada mais próxima e a troca sai numa
-    // camada diferente da pedida — defeito que só aparece com a peça na mão.
-    const k = Math.round((c.topZ - firstLayerHeight) / layerHeight)
-    if (k < 0 || Math.abs(firstLayerHeight + k * layerHeight - c.topZ) > 1e-6) {
-      const perto = firstLayerHeight + Math.max(0, k) * layerHeight
-      throw new Error(
-        `3mf: top_z ${c.topZ} não cai em topo de camada` +
-          ` (grade ${firstLayerHeight} + k*${layerHeight}); mais próximo: ${num(perto)}`,
-      )
-    }
-    anterior = c.topZ
   }
 
   // No modo manual o projeto TEM que declarar um filamento só: o número de
@@ -325,10 +357,10 @@ export function writeProject3MF(o: ProjectOptions): Uint8Array {
     {
       '[Content_Types].xml': enc.encode(CONTENT_TYPES),
       '_rels/.rels': enc.encode(RELS),
-      '3D/3dmodel.model': writeModel(o.objects),
+      '3D/3dmodel.model': writeModel(objects),
       'Metadata/project_settings.config': enc.encode(JSON.stringify(settings, null, 4)),
-      'Metadata/model_settings.config': enc.encode(modelSettings(o.objects)),
-      'Metadata/custom_gcode_per_layer.xml': enc.encode(customGcode(o.colorChanges, manual)),
+      'Metadata/model_settings.config': enc.encode(modelSettings(o.plates)),
+      'Metadata/custom_gcode_per_layer.xml': enc.encode(customGcode(o.plates, manual)),
     },
     // depois que o dedupe saiu, o deflate virou o gasto do writer: medido em
     // 80MB de XML (1,29M triângulos), level 6 custa 2345ms e level 4 custa
