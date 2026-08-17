@@ -12,11 +12,13 @@ Roda 100% no navegador: nenhuma foto sai da sua máquina.
 Em construção. O que já funciona:
 
 - [x] **M0** — cadeia ponta a ponta: grade → peças → malha fechada → STL
-- [ ] **M1** — encaixe jigsaw de verdade (abas em bezier)
-- [ ] **M2** — motor de cor (Beer-Lambert com *transmission distance* por filamento)
-- [ ] **M3** — escrita do `.3mf` de projeto com trocas por camada
-- [ ] **M4** — interface web + preview 3D
+- [x] **M1** — encaixe jigsaw de verdade (abas em bezier)
+- [x] **M2** — motor de cor (Beer-Lambert com *transmission distance* por filamento)
+- [x] **M3** — escrita do `.3mf` de projeto com trocas por camada
+- [ ] **M4** — interface web + preview 3D ← **atual**
 - [ ] **M5** — moldura com pé 30° e divisão automática em placas
+
+O plano completo (decisões, arquitetura e onde parei) está em [`docs/plano.md`](docs/plano.md).
 
 ## Como as cores funcionam
 
@@ -42,6 +44,9 @@ npm install
 npm test                                              # asserts, sem framework
 node src/cli.ts --size 180 --aspect 1.5 --pieces 12 --out puzzle.stl
 ```
+
+Precisa de **Node ≥ 22.18**: os testes rodam `.ts` direto, pelo type stripping nativo do Node.
+Sem build step e sem framework de teste.
 
 O CLI é ferramenta de desenvolvimento — serve pra inspecionar a geometria sem abrir o navegador.
 O núcleo em `src/` não depende de DOM, então roda igual nos testes do Node e no app.

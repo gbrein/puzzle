@@ -4,6 +4,9 @@
   "description": "Gerador open-source de quebra-cabeças imprimíveis em 3D a partir de fotos, com cor em camadas.",
   "license": "MIT",
   "type": "module",
+  "engines": {
+    "node": ">=22.18"
+  },
   "scripts": {
     "test": "node --test 'src/**/*.test.ts'",
     "demo": "node src/cli.ts"
