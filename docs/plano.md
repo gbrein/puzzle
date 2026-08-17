@@ -2,8 +2,17 @@
 
 ## Estado atual (2026-08-17)
 
-**M0, M1, M2 e M3 fechados.** `generatePuzzle` já produz um `.3mf` de 30 peças em ~2,5s, com 136
-testes verdes. Malha indexada e tipada (744k → 292k triângulos, 53,6 → 5,3MB).
+**M0 a M5 fechados.** 151 testes verdes, typecheck limpo (`npm run typecheck`), e o app roda no
+navegador: foto → recorte → cores → `.3mf`, com preview 2D da cor resolvida ao vivo e preview 3D
+do relevo. A moldura com pé de 30° e o auto plate split estão ligados no `generatePuzzle`, e o
+writer do 3MF deixou de ser single-plate — cada placa sai com seus objetos e suas trocas.
+
+O seletor de cor é por **cor, não por nome de rolo**: grade de amostras ordenada por matiz, cada
+uma mostrando a rampa daquele filamento empilhado em 1/2/4/8 camadas. A gama da paleta
+(`paletteSpan`) aparece **enquanto** se escolhe, com o corte em 40 — não mais depois de gerar.
+
+A próxima rodada está em [`plano-ui.md`](plano-ui.md) §4: sugestão de cores pela foto, mapa de
+montagem visível, teste de folga imprimível, wizard de calibração de TD, salvar/carregar.
 
 **Próxima ação — M4, a interface web:** upload + crop, seletor de quantas/quais cores, sliders,
 preview 2D e 3D, deploy no GitHub Pages. O núcleo é livre de DOM, então a UI entra por cima sem

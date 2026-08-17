@@ -15,6 +15,14 @@ import {
 } from './dificuldade.ts'
 import type { PedidoPreview, RespostaPreview } from './preview.worker.ts'
 
+/**
+ * Seed único da sessão, passado EXPLICITAMENTE tanto pro preview quanto pra
+ * geração. Deixar os dois caírem no default do núcleo funciona por acidente:
+ * no dia em que a interface expuser o seed, a prévia mostraria um cronograma e
+ * a peça sairia com outro.
+ */
+const SEED = 1
+
 // ---------------------------------------------------------------- utilidades
 
 const cria = <K extends keyof HTMLElementTagNameMap>(
@@ -589,6 +597,9 @@ const rodarPreview = (): void => {
     maxSwaps: configuracao.maxSwaps,
     dither: configuracao.dither,
     extrusionWidth: configuracao.extrusionWidth,
+    // o mesmo seed da geração, senão a prévia mostraria um cronograma e a peça
+    // sairia com outro
+    seed: SEED,
   }
   worker.postMessage(pedido)
 }
@@ -740,6 +751,7 @@ const gerar = async (): Promise<void> => {
     maxSwaps: configuracao.maxSwaps,
     dither: configuracao.dither,
     extrusionWidth: configuracao.extrusionWidth,
+    seed: SEED,
     swapMode: configuracao.swapMode,
     printerModel: configuracao.printerModel || undefined,
   }

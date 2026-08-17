@@ -1,14 +1,11 @@
-import { buildPalette } from './color/beer-lambert.ts'
-import { ditherToPalette } from './color/dither.ts'
 import { planToProject } from './color/project.ts'
-import { searchSchedule } from './color/schedule.ts'
-import { imageError, renderHeightMap, solveHeights } from './color/solver.ts'
+import { resolveColor } from './color/resolve.ts'
+import { imageError } from './color/solver.ts'
 import { deltaE, rgbToLab } from './color/space.ts'
-import type { Bitmap, Filament, HeightMap, LayerPlan, Palette } from './color/types.ts'
+import type { Bitmap, Filament, LayerPlan, Palette } from './color/types.ts'
 import { totalHeight } from './color/types.ts'
 import { writeProject3MF } from './export/threemf.ts'
 import { toBinarySTL } from './export/stl.ts'
-import { resizeBitmap } from './image/resize.ts'
 import { layoutPlates, type PlacedPiece } from './jigsaw/plates.ts'
 import { pieceMask } from './jigsaw/mask.ts'
 import { tabEdge } from './jigsaw/tabs.ts'
@@ -185,18 +182,28 @@ export function generatePuzzle(opts: GenerateOptions): GenerateResult {
     edgeFn: tabEdge(),
   })
 
-  const cols = Math.max(1, Math.round(puzzle.width / cellSize))
-  const rows = Math.max(1, Math.round(puzzle.height / cellSize))
-
-  // Reamostrar ANTES de ditherizar. O padrão de Floyd-Steinberg só faz sentido
-  // na resolução em que vai ser impresso; ditherizar em 4000px e reduzir depois
-  // mistura os pixels de volta e joga fora o trabalho.
-  const alvo = resizeBitmap(image, cols, rows)
-
-  const plan = searchSchedule(alvo, filaments, { layerHeight, baseLayers, layers, maxSwaps, seed })
-  const palette = buildPalette(plan)
-  const hm: HeightMap = dither ? ditherToPalette(alvo, palette) : solveHeights(alvo, palette)
-  const preview = renderHeightMap(hm, palette)
+  // O caminho de cor mora em `color/resolve.ts` porque o preview ao vivo da
+  // interface roda exatamente ele — duas cópias divergiriam em silêncio, e a
+  // prévia passaria a mostrar uma cor diferente da que sai impressa.
+  const {
+    plan,
+    palette,
+    heightMap: hm,
+    preview,
+    target: alvo,
+    cols,
+    rows,
+  } = resolveColor(image, filaments, {
+    width: puzzle.width,
+    height: puzzle.height,
+    cellSize,
+    layerHeight,
+    baseLayers,
+    layers,
+    maxSwaps,
+    dither,
+    seed,
+  })
 
   const objetos = puzzle.pieces.map((p) => {
     const mask = pieceMask(p.ring, { width: cols, height: rows }, cellSize)

@@ -9,11 +9,7 @@
  * núcleo é proibido, então o caminho de cor é reproduzido aqui com as mesmas
  * funções que o `generatePuzzle` usa.
  */
-import { buildPalette } from '../color/beer-lambert.ts'
-import { ditherToPalette } from '../color/dither.ts'
-import { searchSchedule } from '../color/schedule.ts'
-import { renderHeightMap, solveHeights } from '../color/solver.ts'
-import { resizeBitmap } from '../image/resize.ts'
+import { resolveColor } from '../color/resolve.ts'
 import type { Bitmap, Filament } from '../color/types.ts'
 
 /** O que a thread principal pede. `image` e `filaments` vão por structured clone. */
@@ -29,6 +25,8 @@ export interface PedidoPreview {
   maxSwaps: number
   dither: boolean
   extrusionWidth: number
+  /** Tem que ser o mesmo que a geração vai usar, senão o cronograma difere. */
+  seed: number
 }
 
 export interface ResultadoPreview {
@@ -59,26 +57,21 @@ self.onmessage = (e: MessageEvent<PedidoPreview>) => {
   const p = e.data
   if (p.tipo !== 'preview') return
   try {
-    // Espelha o caminho de cor do generatePuzzle: a célula do relevo é a
-    // largura de extrusão, e a grade vem de size + aspecto da foto.
-    const cellSize = p.extrusionWidth
+    // A MESMA função que o `generatePuzzle` usa — é isso que garante que a
+    // prévia não mostre uma cor e a impressão produza outra. As dimensões da
+    // placa saem do tamanho e do aspecto da foto, igual ao `buildPuzzle`.
     const aspect = p.image.width / p.image.height
-    const largura = aspect >= 1 ? p.size : p.size * aspect
-    const altura = aspect >= 1 ? p.size / aspect : p.size
-    const cols = Math.max(1, Math.round(largura / cellSize))
-    const rows = Math.max(1, Math.round(altura / cellSize))
-
-    const alvo = resizeBitmap(p.image, cols, rows)
-    const baseLayers = Math.max(1, Math.round(p.baseThickness / p.layerHeight))
-    const plan = searchSchedule(alvo, p.filaments, {
+    const { preview } = resolveColor(p.image, p.filaments, {
+      width: aspect >= 1 ? p.size : p.size * aspect,
+      height: aspect >= 1 ? p.size / aspect : p.size,
+      cellSize: p.extrusionWidth,
       layerHeight: p.layerHeight,
-      baseLayers,
+      baseLayers: Math.max(1, Math.round(p.baseThickness / p.layerHeight)),
       layers: p.layers,
       maxSwaps: p.maxSwaps,
+      dither: p.dither,
+      seed: p.seed,
     })
-    const palette = buildPalette(plan)
-    const hm = p.dither ? ditherToPalette(alvo, palette) : solveHeights(alvo, palette)
-    const preview = renderHeightMap(hm, palette)
 
     postar({ tipo: 'resultado', id: p.id, preview }, [preview.data.buffer])
   } catch (err) {
