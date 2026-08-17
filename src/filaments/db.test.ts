@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { FILAMENTS, findFilament } from './db.ts'
+import { FILAMENTS, RESSALVAS, findFilament } from './db.ts'
 import { fitTD, type Sample } from './calibrate.ts'
 import { parseHex } from '../color/space.ts'
 
@@ -27,6 +27,22 @@ test('poucas amostras, mesmo perfeitas, não dão confiança alta', () => {
   assert.equal(fitTD(synth(4, [1.0])).confidence, 'baixa')
 })
 
+// Em dados perfeitos toda amostra cai na mesma reta, então perder uma não muda
+// nada e a suíte não enxerga o erro. Aqui os quatro pontos finos estão em TD=4
+// e o grosso puxa para TD=6 — e no ajuste Σxy/Σx² o peso é x², então o grosso
+// manda sozinho. Descartar qualquer amostra mexe no resultado; descartar a
+// última (o caso do laço que para em length-1) devolve 4 cravado.
+test('o ajuste usa todas as amostras, inclusive a última', () => {
+  const comAlavanca: Sample[] = [
+    ...synth(4, [0.5, 1.0, 1.5, 2.0]),
+    { thicknessMm: 10, transmission: 10 ** (-10 / 6) },
+  ]
+  const { td } = fitTD(comAlavanca)
+  // As cinco amostras dão 5.79775…; a perda menos danosa (a primeira, de menor
+  // peso) já leva a 5.8038 e a da última leva a 4.0 — 0.002 pega as duas.
+  assert.ok(Math.abs(td - 5.79775) < 0.002, `com as 5 amostras o TD é ~5.7978, veio ${td}`)
+})
+
 test('ruído derruba o R² e a confiança sem estragar o TD', () => {
   const td = 4
   const limpo = synth(td, ESPESSURAS)
@@ -43,6 +59,33 @@ test('ruído derruba o R² e a confiança sem estragar o TD', () => {
   assert.notEqual(b.confidence, 'alta')
   // O TD sobrevive ao ruído (é a média que manda), só a confiança cai.
   assert.ok(Math.abs(b.td - td) / td < 0.15)
+})
+
+/** Reta de TD=4 com desvio de ±d em log10, alternado — n = 4, R² afinável por d. */
+function desvio(d: number): Sample[] {
+  return [0.5, 1.0, 1.5, 2.0].map((t, i) => ({
+    thicknessMm: t,
+    transmission: 10 ** (-t / 4 + (i % 2 === 0 ? d : -d)),
+  }))
+}
+
+test("faixa 'media': os dois lados de n >= 3 e de R² >= 0.9", () => {
+  // n: com dados perfeitos (R² = 1) só o tamanho da amostra decide.
+  assert.equal(fitTD(synth(4, [1.0, 1.5])).confidence, 'baixa')
+  assert.equal(fitTD(synth(4, [1.0, 1.5, 2.0])).confidence, 'media')
+
+  // R²: n = 4 fixo dos dois lados (nunca alcança 'alta'), só o R² muda.
+  const acima = fitTD(desvio(0.055))
+  const abaixo = fitTD(desvio(0.056))
+  assert.ok(acima.r2 > 0.9 && acima.r2 < 0.91, `R² deveria encostar em 0.9 por cima, veio ${acima.r2}`)
+  assert.ok(abaixo.r2 > 0.89 && abaixo.r2 < 0.9, `R² deveria encostar em 0.9 por baixo, veio ${abaixo.r2}`)
+  assert.equal(acima.confidence, 'media')
+  assert.equal(abaixo.confidence, 'baixa')
+})
+
+test("faixa 'alta': os dois lados de n >= 5", () => {
+  assert.equal(fitTD(synth(4, [0.5, 1.0, 1.5, 2.0])).confidence, 'media')
+  assert.equal(fitTD(synth(4, [0.5, 1.0, 1.5, 2.0, 2.5])).confidence, 'alta')
 })
 
 test('entrada inválida lança com mensagem clara', () => {
@@ -96,6 +139,19 @@ test('todo TD estimado está marcado, e nenhum verbatim da Prusa está', () => {
   for (const f of FILAMENTS) {
     if (f.id.startsWith('bambu-')) assert.equal(f.estimated, true, `${f.id} deveria estar marcado como estimativa`)
     if (f.id.startsWith('prusament-')) assert.notEqual(f.estimated, true, `${f.id} veio de fonte publicada`)
+  }
+})
+
+test('a ressalva "Inconsistent color" dos rPLA sobreviveu à transcrição', () => {
+  const rpla = FILAMENTS.filter((f) => f.id.includes('-rpla-'))
+  assert.equal(rpla.length, 4, `a fonte marca quatro rPLA, o catálogo tem ${rpla.length}`)
+  for (const f of rpla) {
+    assert.match(RESSALVAS[f.id] ?? '', /inconsistente/i, `${f.id} perdeu a ressalva da fonte`)
+  }
+  // E ninguém que a fonte não marcou herda a ressalva de tabela.
+  for (const id of Object.keys(RESSALVAS)) {
+    assert.ok(findFilament(id), `ressalva aponta para id fora do catálogo: ${id}`)
+    assert.ok(id.includes('-rpla-'), `${id} não é rPLA; a fonte não o marcou`)
   }
 })
 

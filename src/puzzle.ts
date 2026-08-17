@@ -1,3 +1,4 @@
+import type { Ring } from './geom/types.ts'
 import { buildGrid, gridForAspect, pieces, straightEdge, type EdgeFn } from './jigsaw/grid.ts'
 import { shrinkByKerf } from './jigsaw/kerf.ts'
 import { extrudePolygon } from './mesh/extrude.ts'
@@ -19,10 +20,23 @@ export interface PuzzleOptions {
   edgeFn?: EdgeFn
 }
 
-export interface PuzzleResult {
+export interface PuzzlePiece {
+  row: number
+  col: number
+  /**
+   * Contorno anti-horário JÁ com a folga aplicada, em mm no sistema da placa.
+   * É o mesmo anel que gerou a malha — quem for rasterizar a máscara de altura
+   * da peça tem que usar este, não o da grade, senão a máscara vaza pela folga.
+   */
+  ring: Ring
+  /** Prisma da peça: malha indexada e fechada. */
   mesh: Mesh
-  /** Uma malha por peça — o que o 3MF precisa pra tratar cada peça como objeto. */
-  pieceMeshes: Mesh[]
+}
+
+export interface PuzzleResult {
+  /** Todas as peças em uma malha só — atalho para o STL. */
+  mesh: Mesh
+  pieces: PuzzlePiece[]
   cols: number
   rows: number
   width: number
@@ -40,9 +54,10 @@ export function buildPuzzle(opts: PuzzleOptions): PuzzleResult {
   const { cols, rows } = gridForAspect(width, height, pieceCount)
   const grid = buildGrid({ width, height, cols, rows, seed: opts.seed }, opts.edgeFn ?? straightEdge)
 
-  const pieceMeshes = pieces(grid).map((p) =>
-    extrudePolygon(shrinkByKerf(p.ring, kerf), 0, thickness),
-  )
+  const out = pieces(grid).map((p) => {
+    const ring = shrinkByKerf(p.ring, kerf)
+    return { row: p.row, col: p.col, ring, mesh: extrudePolygon(ring, 0, thickness) }
+  })
 
-  return { mesh: concat(pieceMeshes), pieceMeshes, cols, rows, width, height }
+  return { mesh: concat(out.map((p) => p.mesh)), pieces: out, cols, rows, width, height }
 }

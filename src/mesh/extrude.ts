@@ -1,7 +1,7 @@
-import earcut from 'earcut'
+import earcut, { deviation } from 'earcut'
 import type { Ring } from '../geom/types.ts'
 import { ensureCCW } from '../geom/types.ts'
-import { addTriangle, emptyMesh, type Mesh } from './mesh.ts'
+import { MeshBuilder, type Mesh } from './mesh.ts'
 
 /**
  * Prisma reto: o anel `ring` extrudado de z0 até z1, com tampas fechadas.
@@ -15,23 +15,31 @@ export function extrudePolygon(ring: Ring, z0: number, z1: number): Mesh {
   const flat: number[] = []
   for (const [x, y] of r) flat.push(x, y)
   const idx = earcut(flat)
-  if (idx.length === 0) throw new Error('triangulação falhou — anel degenerado ou auto-intersectante')
+  if (idx.length === 0) throw new Error('triangulação falhou — anel degenerado')
 
-  const m = emptyMesh()
-  const at = (i: number, z: number) => [r[i][0], r[i][1], z] as const
+  // earcut não detecta auto-interseção: um bowtie sai calado, com triângulos
+  // que não cobrem o anel e a malha aberta. `deviation` compara a área dos
+  // triângulos com a área do anel e é o que denuncia isso (Infinity quando a
+  // área do anel se cancela, como no bowtie).
+  const dev = deviation(flat, null, 2, idx)
+  if (!(dev < 1e-6)) throw new Error(`anel auto-intersectante: a triangulação erra a área em ${dev}`)
+
+  const m = new MeshBuilder()
+  const lo = r.map(([x, y]) => m.vertex(x, y, z0))
+  const hi = r.map(([x, y]) => m.vertex(x, y, z1))
 
   for (let i = 0; i < idx.length; i += 3) {
     const [a, b, c] = [idx[i], idx[i + 1], idx[i + 2]]
-    addTriangle(m, at(a, z1), at(b, z1), at(c, z1)) // topo, normal +Z
-    addTriangle(m, at(c, z0), at(b, z0), at(a, z0)) // fundo, normal -Z
+    m.tri(hi[a], hi[b], hi[c]) // topo, normal +Z
+    m.tri(lo[c], lo[b], lo[a]) // fundo, normal -Z
   }
 
   for (let i = 0; i < r.length; i++) {
     const j = (i + 1) % r.length
     // anel anti-horário ⇒ a normal da parede aponta pra fora
-    addTriangle(m, at(i, z0), at(j, z0), at(j, z1))
-    addTriangle(m, at(i, z0), at(j, z1), at(i, z1))
+    m.tri(lo[i], lo[j], hi[j])
+    m.tri(lo[i], hi[j], hi[i])
   }
 
-  return m
+  return m.build()
 }

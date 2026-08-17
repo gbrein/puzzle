@@ -1,28 +1,32 @@
 import type { Point } from '../geom/types.ts'
+import { rng } from '../rand.ts'
 import type { EdgeFn } from './grid.ts'
 
 export interface TabOptions {
   /**
    * Meia-base da aba, em fração do comprimento da aresta. A cabeça estufa
    * ~2.5× isso para fora. Default 0.1 (aba clássica de quebra-cabeça).
+   * Faixa aceita: (0, 0.14] — ver TAB_MAX.
    */
   tabSize?: number
-  /** Bagunça dos pontos de controle, em fração do comprimento. Default 0.04. */
+  /**
+   * Bagunça dos pontos de controle, em fração do comprimento. Default 0.04.
+   * Faixa aceita: [0, tabSize], com tabSize + jitter <= 0.16 — ver REACH_MAX.
+   */
   jitter?: number
   /** Pontos amostrados por bezier — são 3 beziers por aresta. Default 16. */
   samples?: number
 }
 
-/** mulberry32: PRNG determinístico e barato. Mesma semente ⇒ mesma sequência. */
-function rng(seed: number): () => number {
-  let s = seed >>> 0
-  return () => {
-    s = (s + 0x6d2b79f5) >>> 0
-    let t = Math.imul(s ^ (s >>> 15), 1 | s)
-    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296
-  }
-}
+/** Teto de `tabSize` sozinho. Medido: 0.15 já parte peça em célula 40×30. */
+const TAB_MAX = 0.14
+/**
+ * Teto de `tabSize + jitter`. As abas das duas arestas que se encontram num
+ * canto da peça apontam para dentro dela e crescem uma na direção da outra; o
+ * jitter empurra as duas mais um tanto. Passando de 0.16 elas se tocam e a peça
+ * sai partida (o `shrinkByKerf` é só quem descobre depois).
+ */
+const REACH_MAX = 0.16
 
 /**
  * Aresta interna como aba clássica (pescoço + cabeça), amostrada em polilinha.
@@ -34,20 +38,29 @@ function rng(seed: number): () => number {
  * peça. Aqui `w` também escala pelo comprimento da aresta (o original usava a
  * dimensão transversal da peça), então a aba cresce junto com a peça.
  *
- * // ponytail: cada aresta sorteia sozinha a partir de ctx.seed, então a
- * // tangente não é contínua ao cruzar um nó da grade (o original encadeia
- * // `a = -e` da aresta anterior). Some um "e anterior" ao EdgeContext se o
- * // bico no nó incomodar visualmente — não afeta o encaixe.
+ * // ponytail: como `w` escala pelo comprimento da aresta e não pela dimensão
+ * // transversal da peça, os tetos acima só valem para células até ~1.6:1
+ * // (medido com os defaults e kerf 0.3: aspecto 1.6 → 0/3200 peças partidas,
+ * // 1.8 → 55/3600, 2.0 → 468/4000). `gridForAspect` nunca passa de 1.33, mas
+ * // `buildGrid` aceita cols/rows arbitrários. Upgrade: levar o tamanho
+ * // transversal da célula no EdgeContext e escalar `w` por ele.
  */
 export function tabEdge(opts: TabOptions = {}): EdgeFn {
   const t = opts.tabSize ?? 0.1
   const j = opts.jitter ?? 0.04
   const samples = opts.samples ?? 16
 
-  if (!(t > 0) || t > 0.2) {
-    throw new Error('tabSize precisa estar em (0, 0.2] — fração do comprimento da aresta')
+  if (!(t > 0) || t > TAB_MAX) {
+    throw new Error(
+      `tabSize ${t} fora de (0, ${TAB_MAX}] — acima disso a cabeça da aba alcança a aba da aresta vizinha da mesma peça e o contorno se fecha sobre si`,
+    )
   }
-  if (!(j >= 0) || j > t) throw new Error('jitter precisa estar em [0, tabSize]')
+  if (!(j >= 0) || j > t) throw new Error(`jitter ${j} fora de [0, tabSize=${t}]`)
+  if (t + j > REACH_MAX) {
+    throw new Error(
+      `tabSize ${t} + jitter ${j} passa de ${REACH_MAX} — o sorteio joga a cabeça da aba por cima da aba vizinha e parte a peça`,
+    )
+  }
   if (!Number.isInteger(samples) || samples < 2) throw new Error('samples precisa ser inteiro >= 2')
 
   return (a, b, ctx) => {

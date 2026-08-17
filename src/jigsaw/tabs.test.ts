@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 
 import type { Point, Ring } from '../geom/types.ts'
 import { signedArea } from '../geom/types.ts'
-import { buildGrid, pieces } from './grid.ts'
+import { buildGrid, pieceOutline, pieces } from './grid.ts'
 import { shrinkByKerf } from './kerf.ts'
 import { tabEdge } from './tabs.ts'
 
@@ -110,7 +110,7 @@ test('mesma semente ⇒ mesma aba; sementes diferentes ⇒ abas diferentes', () 
 
 test('a aba estufa na medida do tabSize e do comprimento da aresta', () => {
   // sem jitter a cabeça é simétrica: o topo da bezier do meio fica em 2.5·t
-  for (const t of [0.06, 0.1, 0.15]) {
+  for (const t of [0.06, 0.1, 0.14]) {
     const poly = tabEdge({ tabSize: t, jitter: 0 })(A, B, ctx(5))
     assert.ok(
       Math.abs(bulge(poly, A, B) - 2.5 * t * 40) < 1e-9,
@@ -120,7 +120,7 @@ test('a aba estufa na medida do tabSize e do comprimento da aresta', () => {
 
   // o ombro dá um mergulho raso para o lado oposto — é o undercut que prende a
   // peça. Sem jitter ele vale exatamente 0.25·t (mínimo da bezier do ombro).
-  for (const t of [0.06, 0.1, 0.15]) {
+  for (const t of [0.06, 0.1, 0.14]) {
     const poly = tabEdge({ tabSize: t, jitter: 0 })(A, B, ctx(5))
     const lado = Math.sign(cross(A, B, poly[20]))
     let fundo = 0
@@ -143,15 +143,59 @@ test('a aba estufa na medida do tabSize e do comprimento da aresta', () => {
   }
 })
 
-test('a soma das áreas das peças é a área da placa', () => {
-  const grid = buildGrid({ width: 200, height: 160, cols: 5, rows: 4, seed: 7 }, tabEdge())
-  const total = pieces(grid).reduce((s, p) => s + signedArea(p.ring), 0)
-  assert.ok(Math.abs(total - 200 * 160) < 1e-6, `soma ${total} != 32000`)
-  // e cada peça é anti-horária, com área na ordem da célula
-  for (const p of pieces(grid)) {
-    const a = signedArea(p.ring)
-    assert.ok(a > 0.5 * 40 * 40 && a < 1.5 * 40 * 40, `peça ${p.row},${p.col} com área ${a}`)
+test('a contagem de pontos é 1 + 3·samples, travada', () => {
+  // são 3 beziers por aresta, cada uma amostrada em `samples` pontos, mais o nó
+  // inicial. O off-by-one clássico (i < samples) derruba isto para 1 + 3·(n-1).
+  for (const samples of [2, 3, 16, 33]) {
+    const poly = tabEdge({ samples })(A, B, ctx(5))
+    assert.equal(poly.length, 1 + 3 * samples, `samples ${samples}`)
   }
+  assert.equal(tabEdge()(A, B, ctx(5)).length, 49, 'default samples=16 ⇒ 49 pontos')
+
+  // e o contorno de uma peça interna carrega isso inteiro: 4 arestas de 49
+  // pontos, menos os 4 nós de canto que o dedupe funde
+  const grid = buildGrid({ width: 200, height: 160, cols: 5, rows: 4, seed: 7 }, tabEdge())
+  assert.equal(pieceOutline(grid, 1, 2).length, 4 * 49 - 4)
+})
+
+test('a aba existe no contorno e é o negativo do encaixe da vizinha', () => {
+  const t = 0.1
+  const grid = buildGrid({ width: 200, height: 160, cols: 5, rows: 4, seed: 7 }, tabEdge({ tabSize: t, jitter: 0 }))
+  // aresta interna compartilhada pela peça (1,2) — que a tem como topo — e pela
+  // peça (2,2) — que a tem como base. y do nó = 2·(160/4) = 80, L = 200/5 = 40.
+  const L = 40
+  const edge = grid.h[2][2]
+  const dev = edge.map((p) => p[1] - 80)
+
+  // a aba existe e tem a medida da geometria: cabeça 2.5·t·L, ombro 0.25·t·L do
+  // lado oposto. Uma reta daria [0, 0].
+  const extremos = [Math.min(...dev), Math.max(...dev)].map(Math.abs).sort((a, b) => a - b)
+  assert.ok(Math.abs(extremos[0] - 0.25 * t * L) < 1e-9, `ombro ${extremos[0]}`)
+  assert.ok(Math.abs(extremos[1] - 2.5 * t * L) < 1e-9, `cabeça ${extremos[1]}`)
+  assert.ok(edge.length > 4, `aresta interna com só ${edge.length} pontos — virou reta`)
+
+  // o encaixe é exato por identidade de pontos, não por tolerância: cada ponto
+  // da aba está nos dois contornos, saliência num e reentrância no outro.
+  const abaixo = pieceOutline(grid, 1, 2)
+  const acima = pieceOutline(grid, 2, 2)
+  for (const p of edge) {
+    const achou = (r: Ring) => r.some((q) => q[0] === p[0] && q[1] === p[1])
+    assert.ok(achou(abaixo) && achou(acima), `ponto ${p} não está nos dois contornos`)
+  }
+  // a peça de baixo tem interior em y<80: desvio +d é material a mais para ela e
+  // material a menos para a de cima. Os dois lados existem.
+  assert.ok(Math.max(...dev) > 0 && Math.min(...dev) < 0, 'a aba não cruza a reta dos nós')
+
+  // e a área que uma peça ganha na aresta é exatamente a que a outra perde
+  const areaAba = dev.reduce(
+    (s, d, i) => (i === 0 ? 0 : s + ((d + dev[i - 1]) / 2) * (edge[i][0] - edge[i - 1][0])),
+    0,
+  )
+  assert.ok(Math.abs(areaAba) > 0.01 * L * L, `a aba move área desprezível (${areaAba})`)
+  assert.ok(
+    Math.abs(signedArea(abaixo) + signedArea(acima) - 2 * L * L) < 1e-6,
+    'o que uma peça ganha a outra não perde',
+  )
 })
 
 test('nenhum contorno de peça se auto-intersecta', () => {
@@ -201,5 +245,64 @@ test('opções fora de faixa dão erro explícito', () => {
   assert.throws(() => tabEdge({ tabSize: 0.3 }), /tabSize/)
   assert.throws(() => tabEdge({ jitter: 0.5 }), /jitter/)
   assert.throws(() => tabEdge({ samples: 1 }), /samples/)
+  assert.throws(() => tabEdge({ samples: 4.5 }), /samples/)
   assert.throws(() => tabEdge()(A, [0, 0], ctx(1)), /degenerada/)
+
+  // jitter maior que a própria aba: regra de contrato (o sorteio é ruído SOBRE a
+  // aba), não de geometria — medido, t=0.05/j=0.11 não parte peça nenhuma.
+  // Só esta cláusula pega o caso, porque a soma ainda cabe em REACH_MAX.
+  assert.throws(() => tabEdge({ tabSize: 0.05, jitter: 0.1 }), /jitter 0\.1 fora de \[0, tabSize=0\.05\]/)
+
+  // os defaults e os limites exatos passam
+  assert.doesNotThrow(() => tabEdge())
+  assert.doesNotThrow(() => tabEdge({ tabSize: 0.14, jitter: 0.02 }))
+  assert.doesNotThrow(() => tabEdge({ tabSize: 0.08, jitter: 0.08 }))
+})
+
+test('a validação recusa exatamente as combinações que partem a peça', () => {
+  // cada par abaixo foi medido partindo peça em grade 5×4 (célula 40×40 ou
+  // 40×30). Quem tem que reclamar é a aba, não a folga do shrinkByKerf.
+  const quebram: [number, number][] = [
+    [0.15, 0], // 376/4500 peças partidas
+    [0.15, 0.01], // 296/4500
+    [0.16, 0], // 1210/4500
+    [0.2, 0], // 2220/4500
+    [0.15, 0.075], // 622/4500 — jitter <= tabSize/2 não basta
+    [0.1, 0.1], // sorteio maior que a própria aba
+    // estes só o teto da soma pega: tabSize dentro da faixa, jitter <= tabSize
+    [0.14, 0.03], // 18/4500
+    [0.14, 0.05], // 84/4500
+    [0.13, 0.06], // 17/4500
+  ]
+  for (const [tabSize, jitter] of quebram) {
+    assert.throws(
+      () => tabEdge({ tabSize, jitter }),
+      /tabSize|jitter/,
+      `tabSize ${tabSize} jitter ${jitter} passou pela validação`,
+    )
+    // e a mensagem culpa a aba, não a folga
+    try {
+      tabEdge({ tabSize, jitter })
+    } catch (e) {
+      assert.match((e as Error).message, /aba|sorteio/, `mensagem de ${tabSize}/${jitter} não fala da aba`)
+    }
+  }
+
+  // o outro lado: o que a validação aceita não parte peça nenhuma, inclusive na
+  // célula 40×30 (aspecto 1.33, o teto do gridForAspect)
+  const boards = [
+    { width: 200, height: 160, cols: 5, rows: 4 },
+    { width: 200, height: 150, cols: 5, rows: 5 },
+  ]
+  for (const [tabSize, jitter] of [[0.14, 0.02], [0.1, 0.06], [0.08, 0.08], [0.1, 0.04]] as [number, number][]) {
+    for (const board of boards) {
+      for (const seed of [1, 2, 3, 7, 42]) {
+        const grid = buildGrid({ ...board, seed }, tabEdge({ tabSize, jitter }))
+        for (const p of pieces(grid)) {
+          assert.equal(selfIntersection(p.ring), null, `t=${tabSize} j=${jitter} seed=${seed} auto-intersecta`)
+          shrinkByKerf(p.ring, 0.3) // lança se a folga partir a peça
+        }
+      }
+    }
+  }
 })

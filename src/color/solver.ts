@@ -31,9 +31,20 @@ export function nearestIndex(lab: Lab, labs: Lab[]): number {
   return best
 }
 
-function pixelCount(img: Bitmap): number {
-  const n = img.width * img.height
-  if (n < 0 || !Number.isInteger(n)) throw new Error('bitmap com dimensões inválidas')
+/**
+ * Nº de células. Valida **cada** dimensão, não o produto: 1.5×4 e -2×-3 dão
+ * produto inteiro e positivo, e vazariam para dentro do HeightMap.
+ */
+function cellCount(width: number, height: number): number {
+  if (!Number.isInteger(width) || width <= 0 || !Number.isInteger(height) || height <= 0) {
+    throw new Error(`dimensões inválidas: ${width}×${height}`)
+  }
+  return width * height
+}
+
+/** cellCount + o cheque de bytes do RGBA. Fronteira única para quem consome Bitmap. */
+export function pixelCount(img: Bitmap): number {
+  const n = cellCount(img.width, img.height)
   if (img.data.length < n * 4) throw new Error(`bitmap tem ${img.data.length} bytes, esperado ${n * 4}`)
   return n
 }
@@ -54,7 +65,7 @@ export function solveHeights(img: Bitmap, palette: Palette): HeightMap {
 /** Volta do mapa de alturas para a imagem que o olho veria. Opaco. */
 export function renderHeightMap(hm: HeightMap, palette: Palette): Bitmap {
   if (palette.length === 0) throw new Error('paleta vazia')
-  const n = hm.width * hm.height
+  const n = cellCount(hm.width, hm.height)
   if (hm.data.length < n) throw new Error(`mapa de alturas tem ${hm.data.length} células, esperado ${n}`)
   const data = new Uint8ClampedArray(n * 4)
   for (let i = 0; i < n; i++) {
@@ -76,7 +87,6 @@ export function imageError(a: Bitmap, b: Bitmap): number {
   }
   const n = pixelCount(a)
   pixelCount(b)
-  if (n === 0) return 0
   let soma = 0
   for (let i = 0; i < n; i++) {
     const p = i * 4

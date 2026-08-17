@@ -15,13 +15,17 @@ import type { Filament } from '../color/types.ts'
  *
  * Regra do arquivo: número sem fonte concreta é `estimated: true`. Nada aqui é
  * medição nossa; a medição real do usuário entra por `calibrate.ts`.
+ *
+ * A fonte ainda traz uma ressalva por linha em alguns itens ("Inconsistent
+ * color" nos quatro rPLA), que não cabe em `estimated` — o TD é publicado, é o
+ * *lote* que varia. Ela vive em `RESSALVAS`, ver ali.
  */
 export const FILAMENTS: Filament[] = [
   // --- brancos e claros (TD alto: a luz atravessa muitas camadas) ---
   { id: 'prusament-pla-vanilla-white', name: 'Prusament PLA Vanilla White', hex: '#D9D4C4', td: 7.1 },
   { id: 'prusament-pla-pearl-white', name: 'Prusament PLA Blend Pearl White', hex: '#D0D7D6', td: 5.4 },
   { id: 'prusament-pla-pristine-white', name: 'Prusament PLA Pristine White', hex: '#E6EAED', td: 5.1 },
-  { id: 'prusament-rpla-risotto', name: 'Prusament rPLA Risotto Pigment', hex: '#CCC9BF', td: 11.0 },
+  { id: 'prusament-rpla-risotto', name: 'Prusament rPLA Risotto Pigment', hex: '#CCC9BF', td: 11.0 }, // ver RESSALVAS
 
   // --- cinzas e neutros ---
   { id: 'prusament-pla-galaxy-silver', name: 'Prusament PLA Galaxy Silver', hex: '#999A9F', td: 6.4 },
@@ -52,15 +56,31 @@ export const FILAMENTS: Filament[] = [
   { id: 'prusament-pla-oh-my-gold', name: 'Prusament PLA Blend Oh My Gold', hex: '#CE9F2D', td: 4.1 },
   { id: 'prusament-pla-viva-la-bronze', name: 'Prusament PLA Blend Viva La Bronze', hex: '#B38E3E', td: 1.9 },
   { id: 'prusament-pla-mystic-brown', name: 'Prusament PLA Premium Mystic Brown', hex: '#482E31', td: 1.8 },
-  { id: 'prusament-rpla-algae', name: 'Prusament rPLA Algae Pigment', hex: '#674B41', td: 4.2 },
-  { id: 'prusament-rpla-wine', name: 'Prusament rPLA Wine Pigment', hex: '#5E493F', td: 2.8 },
-  { id: 'prusament-rpla-corn', name: 'Prusament rPLA Corn Pigment', hex: '#B37B46', td: 6.2 },
+  { id: 'prusament-rpla-algae', name: 'Prusament rPLA Algae Pigment', hex: '#674B41', td: 4.2 }, // ver RESSALVAS
+  { id: 'prusament-rpla-wine', name: 'Prusament rPLA Wine Pigment', hex: '#5E493F', td: 2.8 }, // ver RESSALVAS
+  { id: 'prusament-rpla-corn', name: 'Prusament rPLA Corn Pigment', hex: '#B37B46', td: 6.2 }, // ver RESSALVAS
 
   // --- Bambu Lab: TD relatado pela comunidade, hex aproximado por mim ---
   { id: 'bambu-pla-basic-jade-white', name: 'Bambu Lab PLA Basic Jade White', hex: '#FFFFFF', td: 5.0, estimated: true },
   { id: 'bambu-pla-basic-black', name: 'Bambu Lab PLA Basic Black', hex: '#000000', td: 0.6, estimated: true },
   { id: 'bambu-pla-basic-green', name: 'Bambu Lab PLA Basic Green', hex: '#00AE42', td: 8.0, estimated: true },
 ]
+
+/**
+ * Ressalvas que a fonte publica ao lado da linha e que o tipo `Filament` não
+ * carrega. Mora fora do catálogo porque `types.ts` é fronteira compartilhada;
+ * quem for exibir "hex menos confiável" consulta aqui pelo id.
+ *
+ * Os quatro rPLA são marcados "Inconsistent color" na tabela da Prusa: o TD é
+ * publicado normalmente, mas o pigmento reciclado varia de lote, então o hex
+ * vale menos que o dos demais. Não é `estimated` — a fonte é a mesma.
+ */
+export const RESSALVAS: Record<string, string> = {
+  'prusament-rpla-risotto': 'cor inconsistente entre lotes ("Inconsistent color" na fonte): o hex é menos confiável',
+  'prusament-rpla-algae': 'cor inconsistente entre lotes ("Inconsistent color" na fonte): o hex é menos confiável',
+  'prusament-rpla-wine': 'cor inconsistente entre lotes ("Inconsistent color" na fonte): o hex é menos confiável',
+  'prusament-rpla-corn': 'cor inconsistente entre lotes ("Inconsistent color" na fonte): o hex é menos confiável',
+}
 
 /**
  * ponytail: busca linear num catálogo de dezenas de itens. Se o catálogo virar

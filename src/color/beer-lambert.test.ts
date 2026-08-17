@@ -93,6 +93,42 @@ test('filamento muito translúcido quase não muda a cor de baixo', () => {
   assert.notDeepEqual(p[1], p[0], 'mas alguma coisa tem que mudar')
 })
 
+test('schedule heterogêneo compõe de baixo para cima, na ordem do array', () => {
+  // Três filamentos diferentes: só assim a ordem de composição fica travada.
+  // Valores conferidos à mão fora do código sob teste (Beer-Lambert em luz linear).
+  const p = buildPalette({
+    layerHeight: 0.16,
+    baseLayers: 4,
+    base: fil('#1B1B1B', 0.5),
+    schedule: [fil('#D62828', 1.2), fil('#F5A623', 3.4), fil('#0F62FE', 0.7)],
+  })
+
+  assert.deepEqual(p, [
+    { r: 27, g: 27, b: 27 },
+    { r: 119, g: 31, b: 31 },
+    { r: 140, g: 64, b: 31 },
+    { r: 110, g: 80, b: 172 },
+  ])
+
+  // A paleta invertida seria [.., {23,67,172}, {90,85,164}, {138,76,144}]:
+  // o vermelho tem que aparecer primeiro, não o azul.
+  assert.ok(dist(p[1], { r: 23, g: 67, b: 172 }) > 50, 'ordem do schedule invertida')
+})
+
+test('layerHeight entra no cálculo: camada mais grossa esconde mais a base', () => {
+  const branco = [fil('#FFFFFF', 1.0), fil('#FFFFFF', 1.0)]
+  const fino = buildPalette(plan(0.08, '#000000', branco))
+  const grosso = buildPalette(plan(0.32, '#000000', branco))
+
+  // Nenhum dos dois é 0.2 — um layerHeight fixo no código erraria os dois.
+  assert.deepEqual(fino, [{ r: 0, g: 0, b: 0 }, { r: 114, g: 114, b: 114 }, { r: 151, g: 151, b: 151 }])
+  assert.deepEqual(grosso, [{ r: 0, g: 0, b: 0 }, { r: 191, g: 191, b: 191 }, { r: 227, g: 227, b: 227 }])
+
+  for (let i = 1; i < fino.length; i++) {
+    assert.ok(grosso[i].r > fino[i].r, `camada ${i}: a mais grossa tinha que cobrir mais o preto`)
+  }
+})
+
 test('branco sobre preto com T=0.5 dá 188, não 127 (mistura em luz linear)', () => {
   const camada = 0.2
   const td = camada / Math.log10(2) // 10^(-camada/td) = 0.5

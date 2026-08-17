@@ -1,0 +1,270 @@
+import { buildPalette } from './color/beer-lambert.ts'
+import { ditherToPalette } from './color/dither.ts'
+import { planToProject } from './color/project.ts'
+import { searchSchedule } from './color/schedule.ts'
+import { imageError, renderHeightMap, solveHeights } from './color/solver.ts'
+import { deltaE, rgbToLab } from './color/space.ts'
+import type { Bitmap, Filament, HeightMap, LayerPlan, Palette } from './color/types.ts'
+import { totalHeight } from './color/types.ts'
+import { writeProject3MF } from './export/threemf.ts'
+import { toBinarySTL } from './export/stl.ts'
+import { resizeBitmap } from './image/resize.ts'
+import { pieceMask } from './jigsaw/mask.ts'
+import { tabEdge } from './jigsaw/tabs.ts'
+import { heightMapToMesh } from './mesh/heightmap.ts'
+import { concat, meshBytes, triangleCount, type Mesh } from './mesh/mesh.ts'
+import { buildPuzzle } from './puzzle.ts'
+
+/**
+ * As cores são ESCOLHA DE QUEM USA, não inferência nossa.
+ *
+ * A plataforma mostra um seletor: quantas cores e quais. O catálogo de
+ * filamentos existe só para pré-preencher o TD; quem tiver um rolo fora da
+ * lista digita o hex e o TD medido. `searchSchedule` não escolhe *quais*
+ * filamentos — ela só decide em que ordem e em que alturas os escolhidos entram.
+ */
+export interface GenerateOptions {
+  /** A foto, já decodificada. No browser vem de `createImageBitmap` + canvas. */
+  image: Bitmap
+  /** As cores selecionadas por quem está usando a plataforma. */
+  filaments: Filament[]
+
+  /** Maior dimensão da placa em mm. */
+  size?: number
+  pieceCount?: number
+  /** Folga entre peças. Depende de impressora e filamento — calibre imprimindo. */
+  kerf?: number
+  seed?: number
+
+  /** Camadas de cor acima da base. Mais camadas = mais tons, print mais alto. */
+  layers?: number
+  layerHeight?: number
+  /** Espessura da peça abaixo da cor, em mm. Vira um número inteiro de camadas. */
+  baseThickness?: number
+  /** Trocas de filamento permitidas, contando base → primeira cor. */
+  maxSwaps?: number
+  /**
+   * Difusão de erro (Floyd-Steinberg). **Desligado por default**, e o motivo é
+   * medição, não gosto.
+   *
+   * Difusão de erro só ajuda quando a cor alvo está dentro do que a paleta
+   * alcança. Uma pilha de filamentos produz uma paleta que é uma CURVA no
+   * espaço de cor, não um volume — então a cor de uma foto que cai fora dessa
+   * curva gera erro que nenhuma altura corrige, e a difusão o transforma em
+   * ruído visível. Medido (ΔE borrado, liso → dither):
+   *   rampa preto→branco, foto em tons de cinza .... 2,33 → 1,27  (ganha muito)
+   *   rampa preto→verm→amarelo, foto quente ........ 55,6 → 51,3  (ganha)
+   *   rampa preto→branco, foto azul/verde .......... 34,3 → 35,3  (perde)
+   * E custa ~2,3× mais triângulos em todos os casos.
+   *
+   * Ligue quando a foto estiver dentro da gama dos filamentos escolhidos —
+   * `stats.paletteSpan` é o indicador que a interface pode usar pra sugerir.
+   */
+  dither?: boolean
+
+  /**
+   * Largura de extrusão do bico, em mm. É o piso físico da resolução: uma
+   * feature mais estreita que isso o slicer não imprime, ela some ou vira blob.
+   */
+  extrusionWidth?: number
+  /** mm por célula do relevo. Default = largura de extrusão. */
+  cellSize?: number
+
+  swapMode?: 'manual' | 'ams'
+  printerModel?: string
+}
+
+export interface GenerateResult {
+  threemf: Uint8Array
+  /** Reserva: se o projeto não abrir na máquina de alguém, ainda dá pra imprimir. */
+  stl: Uint8Array
+  /** Instruções de troca em texto puro, o último recurso. */
+  swaps: string
+  plan: LayerPlan
+  palette: Palette
+  /** Como a placa vai ficar impressa — para o preview 2D. */
+  preview: Bitmap
+  stats: {
+    cols: number
+    rows: number
+    pieces: number
+    width: number
+    height: number
+    cells: string
+    triangles: number
+    meshMB: number
+    swaps: number
+    deltaE: number
+    totalHeightMm: number
+    /**
+     * ΔE entre os extremos da paleta: o quanto as cores escolhidas conseguem
+     * se afastar da base com a espessura pedida. Abaixo de ~40 a paleta é uma
+     * rampa curta e a foto sai enlameada por mais camadas que se peça — é o
+     * número que a interface usa pra avisar "aumente as camadas ou escolha
+     * cores mais contrastantes", em vez de deixar a pessoa descobrir imprimindo.
+     */
+    paletteSpan: number
+  }
+}
+
+/** Foto → quebra-cabeça colorido pronto para fatiar. */
+export function generatePuzzle(opts: GenerateOptions): GenerateResult {
+  const {
+    image,
+    filaments,
+    size = 180,
+    pieceCount = 20,
+    kerf = 0.4,
+    seed = 1,
+    // Defaults escolhidos por medição, não por gosto: o que decide se a cor
+    // acontece é a ESPESSURA TOTAL de cor contra o TD dos filamentos. Com TD
+    // típico de 1 a 6mm, uma camada de 0,16mm transmite ~95% do que está
+    // embaixo; 12 camadas de 0,08mm (0,96mm) mal saem da cor da base e a paleta
+    // vira uma rampa curta e enlameada. 25 × 0,16 = 4mm de cor foi onde o erro
+    // parou de cair na medição (ΔE 17,5 → 11,6, estável a partir daí).
+    layers = 25,
+    layerHeight = 0.16,
+    baseThickness = 2.4,
+    maxSwaps = 3,
+    dither = false,
+    extrusionWidth = 0.42,
+    swapMode = 'manual',
+    printerModel,
+  } = opts
+  const cellSize = opts.cellSize ?? extrusionWidth
+
+  if (!filaments?.length) throw new Error('escolha pelo menos uma cor de filamento')
+  if (!(size > 0)) throw new Error('size tem que ser positivo')
+  if (!Number.isInteger(pieceCount) || pieceCount < 1) throw new Error('pieceCount tem que ser inteiro >= 1')
+  if (!Number.isInteger(layers) || layers < 1) throw new Error('layers tem que ser inteiro >= 1')
+  if (!(layerHeight > 0)) throw new Error('layerHeight tem que ser positivo')
+  if (!(baseThickness > 0)) throw new Error('baseThickness tem que ser positivo')
+  if (!(image?.width > 0) || !(image?.height > 0)) throw new Error('imagem vazia')
+  if (cellSize < extrusionWidth) {
+    // não é preciosismo: célula menor que o filete extrudado gera feature que a
+    // impressora não consegue materializar, e o relevo sai borrado ou com blob
+    throw new Error(
+      `cellSize ${cellSize}mm é menor que a largura de extrusão ${extrusionWidth}mm — ` +
+        `a impressora não resolve essa feature`,
+    )
+  }
+
+  // A base do quebra-cabeça É a base opaca do modelo de cor: um número só.
+  // Aceitar espessura e contagem de camadas como entradas independentes é o
+  // caminho mais curto para as cores saírem deslocadas na peça impressa.
+  const baseLayers = Math.max(1, Math.round(baseThickness / layerHeight))
+  const baseZ = baseLayers * layerHeight
+
+  const aspect = image.width / image.height
+  const puzzle = buildPuzzle({
+    size,
+    aspect,
+    pieceCount,
+    thickness: baseZ,
+    kerf,
+    seed,
+    edgeFn: tabEdge(),
+  })
+
+  const cols = Math.max(1, Math.round(puzzle.width / cellSize))
+  const rows = Math.max(1, Math.round(puzzle.height / cellSize))
+
+  // Reamostrar ANTES de ditherizar. O padrão de Floyd-Steinberg só faz sentido
+  // na resolução em que vai ser impresso; ditherizar em 4000px e reduzir depois
+  // mistura os pixels de volta e joga fora o trabalho.
+  const alvo = resizeBitmap(image, cols, rows)
+
+  const plan = searchSchedule(alvo, filaments, { layerHeight, baseLayers, layers, maxSwaps, seed })
+  const palette = buildPalette(plan)
+  const hm: HeightMap = dither ? ditherToPalette(alvo, palette) : solveHeights(alvo, palette)
+  const preview = renderHeightMap(hm, palette)
+
+  const objetos = puzzle.pieces.map((p) => {
+    const mask = pieceMask(p.ring, { width: cols, height: rows }, cellSize)
+    // Dois sólidos sobrepostos no plano z = baseZ — a base com a borda bezier
+    // exata e o relevo em blocos alinhados à grade. Cada um fecha sozinho e o
+    // slicer os une; casar a borda curva com a grade de células custaria muito
+    // mais e não muda nada no que sai da impressora.
+    const relevo = mask.some((v) => v)
+      ? heightMapToMesh(hm, { cellSize, z0: baseZ, layerHeight, mask })
+      : null
+    return {
+      name: `peca-${p.row}-${p.col}`,
+      mesh: relevo ? concat([p.mesh, relevo]) : p.mesh,
+    }
+  })
+  const mesh = concat(objetos.map((o) => o.mesh))
+
+  const { filaments: slots, colorChanges } = planToProject(plan)
+
+  const threemf = writeProject3MF({
+    objects: objetos,
+    filaments: slots,
+    colorChanges,
+    layerHeight,
+    // `heightOf` mede em passos uniformes de layerHeight a partir de zero, e o
+    // writer valida topZ contra `first + k*layer`. Se a primeira camada tiver
+    // altura diferente, nenhuma troca cai num topo real e o slicer arredonda
+    // cada uma para a camada vizinha — cores deslocadas na peça impressa.
+    firstLayerHeight: layerHeight,
+    swapMode,
+    printerModel,
+  })
+
+  return {
+    threemf,
+    stl: toBinarySTL(mesh, 'puzzle'),
+    swaps: descreveTrocas(plan, colorChanges),
+    plan,
+    palette,
+    preview,
+    stats: {
+      cols: puzzle.cols,
+      rows: puzzle.rows,
+      pieces: puzzle.pieces.length,
+      width: puzzle.width,
+      height: puzzle.height,
+      cells: `${cols}×${rows}`,
+      triangles: triangleCount(mesh),
+      meshMB: meshBytes(mesh) / 1e6,
+      swaps: colorChanges.length,
+      deltaE: imageError(alvo, preview),
+      totalHeightMm: totalHeight(plan),
+      paletteSpan: extensaoDaPaleta(palette),
+    },
+  }
+}
+
+/**
+ * Maior distância entre DUAS entradas quaisquer da paleta.
+ *
+ * Comparar só a primeira com a última mede errado: um cronograma que termina no
+ * mesmo filamento da base (coisa que a busca escolhe quando compensa) fecha o
+ * ciclo e devolve ~0, mesmo tendo passado longe no meio. A paleta tem no máximo
+ * 256 entradas, então o par a par é irrelevante perto do resto da pipeline.
+ */
+function extensaoDaPaleta(palette: Palette): number {
+  const labs = palette.map(rgbToLab)
+  let max = 0
+  for (let i = 0; i < labs.length; i++) {
+    for (let j = i + 1; j < labs.length; j++) {
+      const d = deltaE(labs[i], labs[j])
+      if (d > max) max = d
+    }
+  }
+  return max
+}
+
+/** Rede de segurança: se o .3mf não abrir, isto ainda dá para seguir à mão. */
+function descreveTrocas(plan: LayerPlan, changes: { topZ: number; color: string }[]): string {
+  const linhas = [
+    `Puzzle — ${changes.length} troca(s) de filamento`,
+    `Altura de camada: ${plan.layerHeight}mm · base: ${plan.baseLayers} camadas (${(plan.baseLayers * plan.layerHeight).toFixed(2)}mm)`,
+    `Comece com: ${plan.base.name} (${plan.base.hex})`,
+    '',
+  ]
+  for (const c of changes) {
+    linhas.push(`Em Z = ${c.topZ.toFixed(2)}mm — troque para ${c.color}`)
+  }
+  return linhas.join('\n')
+}

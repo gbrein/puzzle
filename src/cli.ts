@@ -1,6 +1,6 @@
 import { writeFileSync } from 'node:fs'
 import { toBinarySTL } from './export/stl.ts'
-import { triangleCount } from './mesh/mesh.ts'
+import { meshBytes, triangleCount } from './mesh/mesh.ts'
 import { buildPuzzle } from './puzzle.ts'
 
 /**
@@ -33,5 +33,7 @@ writeFileSync(out, toBinarySTL(result.mesh))
 console.log(
   `${result.cols}×${result.rows} = ${result.cols * result.rows} peças · ` +
     `${result.width.toFixed(1)}×${result.height.toFixed(1)}mm · ` +
-    `${triangleCount(result.mesh)} triângulos → ${out}`,
+    `${triangleCount(result.mesh)} triângulos · ` +
+    // a malha em memória é o número que decide se isto roda numa aba
+    `${(meshBytes(result.mesh) / 1e6).toFixed(2)} MB de malha → ${out}`,
 )

@@ -10,16 +10,20 @@ export function toBinarySTL(mesh: Mesh, header = 'puzzle'): Uint8Array {
   new Uint8Array(buf, 0, 80).set(head)
   view.setUint32(80, n, true)
 
-  const v = mesh.verts
+  // o STL é não-indexado: aqui os índices são expandidos de volta em vértices
+  const p = mesh.positions
+  const ix = mesh.indices
   for (let t = 0; t < n; t++) {
     const o = 84 + t * 50
-    const i = t * 9
-    const ux = v[i + 3] - v[i]
-    const uy = v[i + 4] - v[i + 1]
-    const uz = v[i + 5] - v[i + 2]
-    const wx = v[i + 6] - v[i]
-    const wy = v[i + 7] - v[i + 1]
-    const wz = v[i + 8] - v[i + 2]
+    const a = ix[t * 3] * 3
+    const b = ix[t * 3 + 1] * 3
+    const c = ix[t * 3 + 2] * 3
+    const ux = p[b] - p[a]
+    const uy = p[b + 1] - p[a + 1]
+    const uz = p[b + 2] - p[a + 2]
+    const wx = p[c] - p[a]
+    const wy = p[c + 1] - p[a + 1]
+    const wz = p[c + 2] - p[a + 2]
     let nx = uy * wz - uz * wy
     let ny = uz * wx - ux * wz
     let nz = ux * wy - uy * wx
@@ -31,7 +35,15 @@ export function toBinarySTL(mesh: Mesh, header = 'puzzle'): Uint8Array {
     view.setFloat32(o, nx, true)
     view.setFloat32(o + 4, ny, true)
     view.setFloat32(o + 8, nz, true)
-    for (let k = 0; k < 9; k++) view.setFloat32(o + 12 + k * 4, v[i + k], true)
+    view.setFloat32(o + 12, p[a], true)
+    view.setFloat32(o + 16, p[a + 1], true)
+    view.setFloat32(o + 20, p[a + 2], true)
+    view.setFloat32(o + 24, p[b], true)
+    view.setFloat32(o + 28, p[b + 1], true)
+    view.setFloat32(o + 32, p[b + 2], true)
+    view.setFloat32(o + 36, p[c], true)
+    view.setFloat32(o + 40, p[c + 1], true)
+    view.setFloat32(o + 44, p[c + 2], true)
     view.setUint16(o + 48, 0, true)
   }
 
