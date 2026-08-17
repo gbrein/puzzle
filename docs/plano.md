@@ -10,6 +10,14 @@ preview 2D e 3D, deploy no GitHub Pages. O núcleo é livre de DOM, então a UI 
 refatorar nada. O seletor de cores é o controle central: `stats.paletteSpan` alimenta o aviso de
 "essas cores não alcançam essa foto".
 
+**M4 e M5 estão sendo tocados em paralelo por três agentes.** A divisão de posse de arquivos e os
+contratos entre as lanes estão em [`contratos-m4.md`](contratos-m4.md) — leia antes de editar
+qualquer coisa em `src/ui`, `src/preview`, `src/worker`, `src/mesh/frame.ts` ou `src/jigsaw/plates.ts`.
+
+**A UI é vanilla TS + DOM, não React** (decisão de 2026-08-17, contra o que este plano dizia
+antes): a interface é upload/crop/sliders/preview, não tem estado que justifique o framework e as
+dependências são contadas.
+
 Pendências que não são código:
 
 - 🔒 Abrir um `.3mf` gerado no Bambu Studio / Orca — nenhum teste cobre "o slicer aceita".
@@ -94,7 +102,7 @@ src/
   export/
     stl.ts            fallback single-color
     threemf.ts        o zip do projeto (detalhe abaixo)
-  ui/                 React: upload, crop, sliders, preview
+  ui/                 vanilla TS + DOM: upload, crop, sliders, preview
   preview/            three.js (3D) + canvas (preview 2D da cor resolvida)
   worker/             solver e meshing fora da thread principal
 ```
