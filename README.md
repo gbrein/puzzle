@@ -2,14 +2,17 @@
 
 Gerador open-source de quebra-cabeças imprimíveis em 3D a partir de fotos, com cor em camadas.
 
-Sobe uma foto, escolhe o tamanho, a dificuldade e as cores dos filamentos — e baixa **um `.3mf` de
-projeto** que abre no slicer já com as trocas de cor embutidas. Sem CAD, sem swap manual.
+Você cadastra os rolos de filamento que **tem**, sobe uma foto, e a plataforma diz quantas cores
+aquela foto pede e quais delas usar — depois é só baixar **um `.3mf` de projeto** que abre no
+slicer já com as trocas de cor embutidas. Sem CAD, sem swap manual.
 
 Roda 100% no navegador: nenhuma foto sai da sua máquina.
 
 ## Estado
 
-A cadeia inteira funciona: sobe a foto, recorta, escolhe as cores e baixa o `.3mf`.
+A cadeia inteira funciona: sobe a foto, recorta, aceita ou edita a paleta sugerida, e baixa o
+`.3mf`. Os previews mostram a cor resolvida em 2D e o modelo **colorido** em 3D — a cor de cada
+ponto sai da altura dele, então visto de cima o 3D reproduz o 2D.
 
 - [x] **M0** — cadeia ponta a ponta: grade → peças → malha fechada → STL
 - [x] **M1** — encaixe jigsaw de verdade (abas em bezier)
@@ -19,9 +22,16 @@ A cadeia inteira funciona: sobe a foto, recorta, escolhe as cores e baixa o `.3m
 - [x] **M5** — moldura com pé 30° e divisão automática em placas
 
 **O que ainda não foi verificado na prática**, e é honesto dizer: ninguém abriu um `.3mf` gerado
-num slicer de verdade, e a folga de encaixe (`kerf`, default 0,4mm) veio de leitura, não de
-medição. Os dois são parâmetros expostos justamente porque dependem da sua impressora e do seu
-filamento — trate como ponto de partida a calibrar, não como número acertado.
+num slicer de verdade nem imprimiu uma peça. A folga de encaixe (`kerf`, default 0,4mm) veio de
+leitura, não de medição, e os TD do catálogo são valores publicados, não medidos por nós. Os três
+são parâmetros expostos justamente porque dependem da sua impressora, do seu filamento e do seu
+lote — trate como ponto de partida a calibrar, não como número acertado.
+
+O default de troca de cor é `ams`: o projeto declara a paleta inteira e cada troca vira
+`ToolChange`. Numa impressora **sem AMS** o slicer descarta esse comando em silêncio quando o
+projeto tem mais de um filamento — para essas, use `swapMode: 'manual'`, que declara um filamento
+só e transforma cada troca numa pausa. É o único modo que produz saída útil sem AMS, ao preço de a
+prévia do slicer sair monocromática.
 
 O plano completo (decisões, arquitetura e onde parei) está em [`docs/plano.md`](docs/plano.md);
 o que vem a seguir na interface, em [`docs/plano-ui.md`](docs/plano-ui.md).
@@ -43,6 +53,30 @@ otimizador pesado.
 O modelo também explica a geometria: a camada `i` é impressa em toda região com `altura >= i`,
 então a peça é uma pilha monótona e nada fica em balanço.
 
+### O passo que faltava: mapear a foto para o que os filamentos alcançam
+
+Casar cor de forma **absoluta** — para cada pixel, a entrada da paleta mais próxima — quebra em
+qualquer foto com sombra funda. Medido numa foto de um cachorro preto sobre madeira: a paleta
+alcançava L\* de 16 a 92, a foto ia de 0 a 83, e **36% dos pixels eram mais escuros que o
+filamento mais escuro**. Todos caíam no mesmo nível, e o cachorro saía como uma mancha chapada.
+
+Por isso a faixa tonal da foto é remapeada para a faixa alcançável **antes** do casamento (em
+Lab, mexendo só em L\*), como o HueForge faz. Na mesma foto, o ΔE caiu de 13,8 para 10,5 — e,
+mais importante que o número, o focinho e o pelo voltaram a existir. `toneMap: 'off'` desliga.
+
+### Quantas cores esta foto pede
+
+A plataforma escolhe **dentro dos rolos que você declarou ter**, nunca fora. O motor é guloso:
+começa pela melhor cor sozinha e acrescenta a que mais derruba o erro, montando uma curva de
+"erro por número de cores" que é mostrada na tela — a recomendação vem com o motivo, e você
+edita à vontade.
+
+Uma armadilha que essa busca esconde, e que vale registrar: como o tone map estica a foto para a
+faixa da paleta, medir cada conjunto candidato contra o *seu próprio* alvo faria **três cinzas
+quase iguais vencerem** — eles espremem a imagem na faixa minúscula deles, reproduzem esse alvo
+achatado quase perfeitamente e pontuam ótimo enquanto destroem a foto. O alvo é calculado uma vez,
+com a faixa do inventário inteiro, e todos os candidatos são medidos contra ele.
+
 ## Escolher a cor, não o nome do rolo
 
 O seletor é uma grade de amostras ordenada por matiz. Mas cor sozinha esconde o que decide o
@@ -60,6 +94,27 @@ de cálculo, então aparece na hora — não depois de gerar.
 A gama é a maior distância ΔE entre **duas cores quaisquer** da paleta, e não entre a primeira e a
 última: um cronograma que termina no mesmo filamento da base fecha o ciclo e daria ~0, mesmo tendo
 passado longe no meio.
+
+## Relevo e número de cores são acoplados
+
+A altura da peça não é um número solto. Cada rolo precisa de espessura para **desenvolver a cor**
+dele contra o próprio TD, então mais cores exigem mais relevo. Medido, mesma foto:
+
+| relevo | ΔE com 3 cores | ΔE com 5 cores |
+|---|---|---|
+| 4,00 mm | 34,5 | 25,2 |
+| 2,40 mm | 34,5 | 28,2 |
+| 1,60 mm | 34,6 | 30,9 |
+| 1,20 mm | 34,7 | 32,8 |
+
+Com 3 cores, cair de 4mm para 1,6mm é de graça; com 5, custa quase 6 de ΔE. Por isso o default de
+camadas é derivado da paleta (~10 camadas por faixa de filamento) em vez de fixo, e o resultado
+expõe `stats.mmPorFaixa` — abaixo de ~0,5mm por faixa a cor não acontece, e a interface avisa
+antes de você imprimir para descobrir.
+
+A altura de camada default é **0,08mm**, que é o piso físico de um bico de 0,4mm (o perfil mais
+fino que o Bambu Studio oferece para ele). Camada mais fina não diminui o relevo — ela multiplica
+os degraus de tom dentro do mesmo relevo.
 
 ## Desenvolvimento
 
@@ -82,13 +137,13 @@ O núcleo em `src/` não depende de DOM, então roda igual nos testes do Node e 
 src/
   geom/      tipos e primitivas de polígono
   jigsaw/    grade, arestas compartilhadas, folga de encaixe, split em placas
-  color/     Beer-Lambert, paleta, mapa de alturas, cronograma de trocas
+  color/     Beer-Lambert, tone map, paleta, alturas, cronograma e sugestão
   filaments/ catálogo com TD e calibração
   image/     reamostragem
   mesh/      extrusão, greedy meshing do relevo, moldura, malha fechada
   export/    STL e o 3MF de projeto (multi-placa)
   ui/        interface (vanilla TS + DOM, sem framework)
-  preview/   canvas 2D da cor resolvida e cena three.js
+  preview/   canvas 2D da cor resolvida e cena three.js colorida por altura
   worker/    geração fora da thread principal
 ```
 
@@ -99,6 +154,23 @@ mostra uma cor e imprime outra é pior que prévia nenhuma.
 **Por que as peças encaixam:** duas peças vizinhas usam literalmente a *mesma* polilinha de
 aresta, uma delas invertida. O encaixe é exato por construção; a folga vem depois, de um offset
 de distância constante.
+
+Custo da geração, medido com os defaults atuais (3 filamentos, 20 camadas de 0,08mm):
+
+| placa | peças | tempo | triângulos | `.3mf` | RSS |
+|---|---|---|---|---|---|
+| 180 mm | 20 | 2,2 s | 473k | 3,8 MB | 159 MB |
+| 180 mm | 35 | 2,5 s | 549k | 4,5 MB | 282 MB |
+| 250 mm | 63 | 4,9 s | 974k | 8,0 MB | 299 MB |
+
+## Deploy
+
+`.github/workflows/ci.yml` roda testes, typecheck e build em todo push e PR.
+`.github/workflows/deploy.yml` publica `dist/` no GitHub Pages a cada push na `main`, e roda os
+testes **antes** de publicar. O `vite.config.ts` usa `base: '/puzzle/'`, o caminho de um Pages de
+projeto.
+
+Num fork, é preciso ligar uma vez: **Settings → Pages → Source: GitHub Actions**.
 
 ## Dependências
 
