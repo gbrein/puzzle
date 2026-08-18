@@ -48,12 +48,12 @@ body {
 }
 
 .cabecalho {
-  margin-bottom: 20px;
+  margin-bottom: 16px;
 }
 
 .cabecalho h1 {
   margin: 0 0 4px;
-  font-size: 26px;
+  font-size: 22px;
   letter-spacing: -0.02em;
 }
 
@@ -83,7 +83,7 @@ body {
 .coluna {
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 12px;
   min-width: 0;
 }
 
@@ -115,13 +115,13 @@ body {
   background: var(--painel);
   border: 1px solid var(--borda);
   border-radius: var(--raio);
-  padding: 16px 18px;
+  padding: 14px 16px;
   box-shadow: var(--sombra);
 }
 
 .painel h2 {
-  margin: 0 0 12px;
-  font-size: 15px;
+  margin: 0 0 10px;
+  font-size: 13px;
   text-transform: uppercase;
   letter-spacing: 0.06em;
   color: var(--mudo);
@@ -149,7 +149,7 @@ body {
 .dropzone {
   border: 2px dashed var(--borda);
   border-radius: var(--raio);
-  padding: 28px 18px;
+  padding: 20px 14px;
   text-align: center;
   cursor: pointer;
   transition: border-color 0.15s ease, background-color 0.15s ease;
@@ -191,13 +191,38 @@ body {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  margin-top: 12px;
+  margin-top: 10px;
   flex-wrap: wrap;
 }
 
 .info {
   color: var(--mudo);
   font-size: 13px;
+}
+
+/* miniatura: a foto vira isso depois de aplicar o recorte — o canvas grande
+   só ocupa a coluna enquanto se recorta. */
+.miniatura {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  align-items: flex-start;
+}
+
+.miniatura canvas {
+  max-width: 200px;
+  height: auto;
+  border: 1px solid var(--borda);
+  border-radius: 8px;
+  display: block;
+  background: #000;
+}
+
+.linha-miniatura {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
 }
 
 /* --- filamentos --- */
@@ -419,7 +444,7 @@ body {
 .controles {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 10px;
 }
 
 .controle {
@@ -491,12 +516,12 @@ body {
   align-items: center;
   justify-content: center;
   gap: 8px;
-  padding: 8px 14px;
+  padding: 7px 12px;
   border-radius: 8px;
   border: 1px solid var(--borda);
   background: var(--painel-2);
   color: var(--texto);
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 500;
   cursor: pointer;
   transition: border-color 0.12s ease, background-color 0.12s ease, opacity 0.12s ease;
@@ -568,12 +593,19 @@ body {
 
 .bloco-preview {
   min-width: 0;
+  height: clamp(340px, 56vh, 540px);
 }
 
 .estado-vazio {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
   border: 1px dashed var(--borda);
   border-radius: 8px;
-  padding: 28px 18px;
+  padding: 20px;
   text-align: center;
   color: var(--mudo);
   font-size: 13px;
@@ -585,7 +617,7 @@ body {
 
 #preview-2d {
   width: 100%;
-  max-height: 55vh;
+  height: 100%;
   object-fit: contain;
   image-rendering: pixelated;
   background: #000;
@@ -596,7 +628,7 @@ body {
 
 #preview-3d {
   width: 100%;
-  height: 400px;
+  height: 100%;
   border: 1px solid var(--borda);
   border-radius: 8px;
   overflow: hidden;
@@ -710,8 +742,8 @@ body {
   border: 1px solid var(--aviso-borda);
   color: var(--aviso-texto);
   border-radius: var(--raio);
-  padding: 12px 14px;
-  margin-bottom: 16px;
+  padding: 10px 12px;
+  margin-bottom: 12px;
 }
 
 .aviso .titulo {
@@ -735,30 +767,58 @@ body {
   font-size: 14px;
 }
 
-/* --- stats --- */
+/* --- stats: resumo de uma linha + detalhes recolhidos --- */
+
+.resumo-painel {
+  padding: 12px 16px;
+}
+
+.resumo-linha {
+  margin: 0;
+  font-size: 13px;
+  color: var(--texto);
+}
+
+.detalhes-stats {
+  margin-top: 8px;
+}
+
+.detalhes-stats summary {
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--mudo);
+  user-select: none;
+}
+
+.detalhes-stats summary:hover {
+  color: var(--texto);
+}
+
+.detalhes-stats .stats {
+  margin-top: 10px;
+}
 
 .stats {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
-  gap: 10px;
-  margin-top: 16px;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 8px;
 }
 
 .stat {
   background: var(--painel-2);
   border: 1px solid var(--borda);
   border-radius: 8px;
-  padding: 10px 12px;
+  padding: 8px 10px;
 }
 
 .stat .valor {
-  font-size: 17px;
+  font-size: 15px;
   font-weight: 600;
   font-variant-numeric: tabular-nums;
 }
 
 .stat .rotulo {
-  font-size: 12px;
+  font-size: 11px;
   color: var(--mudo);
   text-transform: uppercase;
   letter-spacing: 0.04em;
@@ -770,8 +830,8 @@ body {
 .downloads {
   display: flex;
   flex-wrap: wrap;
-  gap: 10px;
-  margin-top: 16px;
+  gap: 8px;
+  margin-top: 12px;
 }
 
 .downloads .btn .icone {
@@ -817,7 +877,7 @@ body {
 }
 
 .rodape {
-  margin-top: 40px;
+  margin-top: 32px;
   color: var(--mudo);
   font-size: 12px;
   text-align: center;

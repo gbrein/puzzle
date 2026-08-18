@@ -65,6 +65,15 @@ export interface GenerateOptions {
   dither?: boolean
 
   /**
+   * `auto` (default): remapeia a foto (em L\*) pro que os filamentos
+   * alcançam ANTES do casamento de cor — sem isso, uma foto mais escura que
+   * o filamento mais escuro colapsa inteira no mesmo nível (medido: 36,4%
+   * dos pixels de uma foto real caíam nesse caso, e a paleta usava só um
+   * nível). `off` desliga e usa a foto crua. Ver `src/color/tone.ts`.
+   */
+  toneMap?: 'auto' | 'off'
+
+  /**
    * Largura de extrusão do bico, em mm. É o piso físico da resolução: uma
    * feature mais estreita que isso o slicer não imprime, ela some ou vira blob.
    */
@@ -72,6 +81,16 @@ export interface GenerateOptions {
   /** mm por célula do relevo. Default = largura de extrusão. */
   cellSize?: number
 
+  /**
+   * `ams` (default, decisão do Guilherme): declara a paleta inteira e cada
+   * troca vira `ToolChange` — quem tem AMS não toca em nada.
+   *
+   * `manual`: numa impressora sem AMS o `ToolChange` é descartado em silêncio
+   * pelo slicer se o projeto declarar mais de um filamento, então esse modo
+   * força o projeto a UM filamento só e cada troca vira uma pausa — é o único
+   * caminho que produz saída útil numa P1S sem AMS. Continua existindo por
+   * isso; não é um modo legado.
+   */
   swapMode?: 'manual' | 'ams'
   printerModel?: string
 
@@ -90,6 +109,15 @@ export interface GenerateResult {
   swaps: string
   plan: LayerPlan
   palette: Palette
+  /**
+   * Filamentos que o plano REALMENTE usou, na ordem em que entram (base
+   * primeiro). Pode ser um subconjunto de `filaments` (a entrada): `maxSwaps`
+   * limita quantas trocas cabem, então com o default 3 no máximo 4 filamentos
+   * entram (base + 3 trocas), mesmo que a pessoa tenha escolhido 8 — isso
+   * acontecia em silêncio até agora. A interface usa esta lista pra avisar
+   * quais das cores escolhidas ficaram de fora.
+   */
+  usedFilaments: Filament[]
   /** Como a placa vai ficar impressa — para o preview 2D. */
   preview: Bitmap
   /** A malha final concatenada — para o preview 3D. Use direto, sem parsear o STL de volta. */
@@ -132,19 +160,38 @@ export function generatePuzzle(opts: GenerateOptions): GenerateResult {
     pieceCount = 20,
     kerf = 0.4,
     seed = 1,
-    // Defaults escolhidos por medição, não por gosto: o que decide se a cor
-    // acontece é a ESPESSURA TOTAL de cor contra o TD dos filamentos. Com TD
-    // típico de 1 a 6mm, uma camada de 0,16mm transmite ~95% do que está
-    // embaixo; 12 camadas de 0,08mm (0,96mm) mal saem da cor da base e a paleta
-    // vira uma rampa curta e enlameada. 25 × 0,16 = 4mm de cor foi onde o erro
-    // parou de cair na medição (ΔE 17,5 → 11,6, estável a partir daí).
-    layers = 25,
-    layerHeight = 0.16,
+    // Defaults escolhidos por medição, não por gosto, e são DOIS números com
+    // papéis diferentes:
+    //
+    // A ESPESSURA TOTAL de cor (layers × layerHeight) contra o TD dos filamentos
+    // é o que decide se a cor acontece. Com TD típico de 1 a 6mm, 0,96mm de cor
+    // mal sai da cor da base e a paleta vira uma rampa curta e enlameada; 4mm foi
+    // onde o erro parou de cair (ΔE 17,5 → 11,6, estável a partir daí). Por isso
+    // 4mm continua sendo o alvo.
+    //
+    // A ALTURA DE CAMADA, com a espessura total fixa, é quantos DEGRAUS de tom
+    // cabem nesses 4mm. Medido na foto de um cachorro preto sobre madeira, com
+    // preto + marrom + branco (mesmos 4mm em todos os casos):
+    //   25 × 0,16 .... 26 níveis, 21 usados, maior mancha chapada 22,0%, 909k tri
+    //   50 × 0,08 .... 51 níveis, 45 usados, maior mancha chapada 15,1%, 1439k tri
+    //  100 × 0,04 ... 101 níveis, 69 usados, maior mancha chapada 11,7%, 2449k tri
+    // O ΔE satura em 10,2 já no segundo caso — quem continua melhorando é a
+    // gradação, que é o que se vê como banda na peça impressa.
+    //
+    // 0,08mm é o piso FÍSICO com bico de 0,4mm (é o perfil mais fino que o Bambu
+    // Studio oferece para esse bico), e a terceira linha só imprime com bico de
+    // 0,2mm cobrando 44MB de malha por um ΔE igual. Por isso o default é a linha
+    // do meio: o mínimo imprimível, não o mínimo teórico.
+    layers = 50,
+    layerHeight = 0.08,
     baseThickness = 2.4,
     maxSwaps = 3,
     dither = false,
+    toneMap = 'auto',
     extrusionWidth = 0.42,
-    swapMode = 'manual',
+    // ams: com AMS instalado, todas as cores viram ToolChange e ninguém troca
+    // rolo na mão. Quem imprime numa P1S sem AMS passa `swapMode: 'manual'`.
+    swapMode = 'ams',
     printerModel,
   } = opts
   const cellSize = opts.cellSize ?? extrusionWidth
@@ -202,6 +249,7 @@ export function generatePuzzle(opts: GenerateOptions): GenerateResult {
     layers,
     maxSwaps,
     dither,
+    toneMap,
     seed,
   })
 
@@ -228,6 +276,7 @@ export function generatePuzzle(opts: GenerateOptions): GenerateResult {
   const mesh = concat(objetos.map((o) => o.mesh))
 
   const { filaments: slots, colorChanges } = planToProject(plan)
+  const usedFilaments = filamentosUsados(plan)
 
   // Auto plate split: cada peça sai posicionada na sua mesa (`layout.placement`
   // está na MESMA ordem de `puzzle.pieces`/`objetos` — layoutPlates recebe os
@@ -285,6 +334,7 @@ export function generatePuzzle(opts: GenerateOptions): GenerateResult {
     swaps: descreveTrocas(plan, colorChanges),
     plan,
     palette,
+    usedFilaments,
     preview,
     mesh,
     placement: layout.placement,
@@ -342,6 +392,18 @@ function extensaoDaPaleta(palette: Palette): number {
     }
   }
   return max
+}
+
+/** Deduplica base + cronograma por id, na ordem em que cada filamento entra. */
+function filamentosUsados(plan: LayerPlan): Filament[] {
+  const vistos = new Set<string>()
+  const out: Filament[] = []
+  for (const f of [plan.base, ...plan.schedule]) {
+    if (vistos.has(f.id)) continue
+    vistos.add(f.id)
+    out.push(f)
+  }
+  return out
 }
 
 /** Rede de segurança: se o .3mf não abrir, isto ainda dá para seguir à mão. */

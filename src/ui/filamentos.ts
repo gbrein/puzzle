@@ -1,19 +1,26 @@
 import type { Filament, LayerPlan, RGB } from '../color/types.ts'
 import { FILAMENTS, RESSALVAS } from '../filaments/db.ts'
 import { buildPalette } from '../color/beer-lambert.ts'
-import { parseHex, rgbToLab, toHex } from '../color/space.ts'
+import { parseHex, rgbToLab, toHex, type Lab } from '../color/space.ts'
 import './filamentos.css'
 
 /**
  * Seletor de filamentos — escolher cor, não nome de rolo.
  *
- * Grade de amostras grandes **ordenada por matiz** (H, depois L, via Lab),
- * busca por texto, e cada amostra mostra a **rampa real** do filamento
- * empilhado em 1/2/4/8 camadas sobre a base atual — é o que revela que dois
- * vermelhos com TD 0,3 e 3,3 se comportam de forma completamente diferente.
- * A rampa custa ~0 ms (`buildPalette`), então pode ser calculada na hora.
+ * Grade de amostras GRANDES ordenada por matiz (H, depois L, via Lab), com os
+ * neutros de baixa croma agrupados à parte (preto, branco e cinza não têm
+ * matiz definido — o matiz puro os jogaria em posições arbitrárias). Cada
+ * amostra mostra a **rampa real** do filamento empilhado em 1/2/4/8 camadas
+ * sobre a base atual — é o que revela que dois vermelhos com TD 0,3 e 3,3 se
+ * comportam de forma completamente diferente. A rampa custa ~0 ms
+ * (`buildPalette`), então pode ser calculada na hora.
  *
- * Mantém a assinatura `{ container, estado, aoMudar }` — a lane B chama por ela.
+ * "Meus rolos" (cadastrados à mão) e catálogo ficam em seções separadas — quem
+ * escolhe quer o que TEM à vista, sem o catálogo inteiro no meio do caminho.
+ * E há um modo **comparar** que pinha duas amostras lado a lado sem tocar na
+ * seleção.
+ *
+ * Mantém a assinatura `{ container, estado, aoMudar }` — o main.ts chama por ela.
  */
 
 // Altura de camada fixa e representativa para a rampa (o default da UI). O
@@ -22,6 +29,11 @@ import './filamentos.css'
 const RAMPA_LAYER_HEIGHT = 0.16
 const RAMPA_CAMADAS = [1, 2, 4, 8] as const
 const RAMPA_TOPO = RAMPA_CAMADAS[RAMPA_CAMADAS.length - 1]
+
+// Abaixo desta croma (C* ≈ sqrt(a²+b²)) o matiz deixa de ser confiável — o tom
+// é neutro. Valor medido no catálogo: cinzas têm C* < 8, a madeira mais apagada
+// fica acima de 10.
+const CROMA_NEUTRA = 10
 
 // Base de referência enquanto nenhum filamento estiver selecionado. O td aqui
 // é irrelevante — a base é opaca, o `buildPalette` nunca usa o td dela.
@@ -40,6 +52,12 @@ export function montarFilamentos(opts: {
   const { container, estado, aoMudar } = opts
   const manuais: Filament[] = []
   let busca = ''
+
+  // Estado do modo comparar — é estado de INTERFACE, não de seleção: mexer aqui
+  // re-renderiza mas NÃO dispara aoMudar() (a escolha de rolos não mudou).
+  let comparando = false
+  let compararA: Filament | null = null
+  let compararB: Filament | null = null
 
   const indice = (id: string): number => estado.findIndex((f) => f.id === id)
 
@@ -73,34 +91,67 @@ export function montarFilamentos(opts: {
     return RAMPA_CAMADAS.map((k) => palette[k])
   }
 
-  const matiz = (c: RGB): number => {
-    const [, a, b] = rgbToLab(c)
+  // --- ordem: matiz para os cromáticos, luminosidade para os neutros ---
+
+  const labDe = (f: Filament): Lab => rgbToLab(parseHex(f.hex))
+  const matiz = ([, a, b]: Lab): number => {
     const h = (Math.atan2(b, a) * 180) / Math.PI
     return h < 0 ? h + 360 : h
   }
+  const croma = ([, a, b]: Lab): number => Math.hypot(a, b)
+  const luminosidade = ([l]: Lab): number => l
 
-  const luminosidade = (c: RGB): number => rgbToLab(c)[0]
+  const grupoDe = (f: Filament): 'cor' | 'neutro' => (croma(labDe(f)) < CROMA_NEUTRA ? 'neutro' : 'cor')
 
-  // Recalculado a cada render, e não uma vez só: `manuais` cresce quando alguém
-  // cadastra um rolo, e uma lista congelada na partida deixaria o rolo novo
-  // fora da grade para sempre.
-  const ordenadas = (): Filament[] =>
-    [...FILAMENTS, ...manuais].sort((x, y) => {
-      const hx = matiz(parseHex(x.hex))
-      const hy = matiz(parseHex(y.hex))
+  /**
+   * Recalculada a cada render, e não uma vez só: `manuais` cresce quando alguém
+   * cadastra um rolo, e uma lista congelada na partida deixaria o rolo novo
+   * fora da grade para sempre.
+   *
+   * Ordem: cores por matiz (e luminosidade), neutros agrupados no fim por
+   * luminosidade — o matiz puro espalharia preto/branco/cinza em posições
+   * arbitrárias, porque eles não têm matiz definido.
+   */
+  const ordenadas = (lista: Filament[]): Filament[] =>
+    [...lista].sort((x, y) => {
+      const gx = grupoDe(x)
+      const gy = grupoDe(y)
+      if (gx !== gy) return gx === 'neutro' ? 1 : -1
+      if (gx === 'neutro') return luminosidade(labDe(x)) - luminosidade(labDe(y))
+      const hx = matiz(labDe(x))
+      const hy = matiz(labDe(y))
       if (hx !== hy) return hx - hy
-      return luminosidade(parseHex(x.hex)) - luminosidade(parseHex(y.hex))
+      return luminosidade(labDe(x)) - luminosidade(labDe(y))
     })
 
   // Busca sem diferenciar maiúsculas nem acentos: "aze" acha "Azul".
   const normaliza = (s: string): string => s.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '')
 
-  const visiveis = (): Filament[] => {
-    const todas = ordenadas()
-    if (!busca) return todas
+  const filtradas = (lista: Filament[]): Filament[] => {
+    if (!busca) return lista
     const alvo = normaliza(busca)
-    return todas.filter((f) => normaliza(f.name).includes(alvo))
+    return lista.filter((f) => normaliza(f.name).includes(alvo))
   }
+
+  // --- modo comparar ---
+
+  const alternarComparado = (f: Filament): void => {
+    if (compararA?.id === f.id) compararA = null
+    else if (compararB?.id === f.id) compararB = null
+    else if (!compararA) compararA = f
+    else if (!compararB) compararB = f
+    else {
+      // já tem dois pinos — o mais antigo (A) dá lugar ao novo
+      compararA = compararB
+      compararB = f
+    }
+    render()
+  }
+
+  const marcadorComparado = (f: Filament): 'A' | 'B' | null =>
+    compararA?.id === f.id ? 'A' : compararB?.id === f.id ? 'B' : null
+
+  // --- DOM dos itens ---
 
   const botaoChip = (rotulo: string, titulo: string, acao: () => void, desabilitado: boolean): HTMLButtonElement => {
     const b = document.createElement('button')
@@ -154,20 +205,7 @@ export function montarFilamentos(opts: {
     return li
   }
 
-  const cardAmostra = (f: Filament): HTMLButtonElement => {
-    const ativo = indice(f.id) !== -1
-    const btn = document.createElement('button')
-    btn.type = 'button'
-    btn.className = 'fil-amostra' + (ativo ? ' ativo' : '')
-
-    const base = baseAtual()
-    btn.title = `${f.name} · TD ${f.td} mm
-Rampa sobre ${base.name} (${base.hex}) em 1/2/4/8 camadas`
-
-    const swatch = document.createElement('span')
-    swatch.className = 'fil-swatch'
-    swatch.style.backgroundColor = f.hex
-
+  const rampaDe = (f: Filament): HTMLSpanElement => {
     const rampa = document.createElement('span')
     rampa.className = 'fil-rampa'
     rampaDo(f).forEach((cor, k) => {
@@ -177,12 +215,38 @@ Rampa sobre ${base.name} (${base.hex}) em 1/2/4/8 camadas`
       cel.title = `${RAMPA_CAMADAS[k]} camada(s) → ${toHex(cor)}`
       rampa.append(cel)
     })
+    return rampa
+  }
+
+  const cardAmostra = (f: Filament): HTMLButtonElement => {
+    const ativo = indice(f.id) !== -1
+    const marca = marcadorComparado(f)
+    const btn = document.createElement('button')
+    btn.type = 'button'
+    btn.className =
+      'fil-amostra' +
+      (ativo ? ' ativo' : '') +
+      (comparando ? ' comparando' : '') +
+      (marca ? ` comparado` : '')
+
+    const base = baseAtual()
+    btn.title = `${f.name} · TD ${f.td.toFixed(1)} mm
+Rampa sobre ${base.name} (${base.hex}) em 1/2/4/8 camadas`
+
+    const swatch = document.createElement('span')
+    swatch.className = 'fil-swatch'
+    swatch.style.backgroundColor = f.hex
 
     const nome = document.createElement('span')
     nome.className = 'fil-amostra-nome'
     nome.textContent = f.name
+    nome.title = f.name
 
-    btn.append(swatch, rampa, nome)
+    const td = document.createElement('span')
+    td.className = 'fil-amostra-td'
+    td.textContent = `TD ${f.td.toFixed(1).replace('.', ',')} mm`
+
+    btn.append(swatch, rampaDe(f), nome, td)
 
     if (f.estimated) {
       const selo = document.createElement('span')
@@ -195,12 +259,23 @@ Rampa sobre ${base.name} (${base.hex}) em 1/2/4/8 camadas`
     const ressalva = RESSALVAS[f.id]
     if (ressalva) btn.title = `${f.name} — ${ressalva}\n${btn.title}`
 
+    if (comparando) {
+      const badge = document.createElement('span')
+      badge.className = 'fil-amostra-badge'
+      badge.textContent = marca ?? '?'
+      badge.title = 'Pino do modo comparar — a seleção não muda.'
+      btn.append(badge)
+    }
+
     const check = document.createElement('span')
     check.className = 'fil-amostra-check'
     check.textContent = '✓'
     btn.append(check)
 
-    btn.addEventListener('click', () => selecionar(f))
+    btn.addEventListener('click', () => {
+      if (comparando) alternarComparado(f)
+      else selecionar(f)
+    })
     return btn
   }
 
@@ -282,8 +357,10 @@ Rampa sobre ${base.name} (${base.hex}) em 1/2/4/8 camadas`
     return detalhes
   }
 
-  // DOM fixo fora do render — recriar a busca a cada tecla faria o input perder
-  // o foco a cada caractere digitado.
+  // --- DOM fixo fora do render ---
+  // Recriar a busca a cada tecla faria o input perder o foco a cada caractere
+  // digitado; o painel de comparar também é fixo (o conteúdo é que muda).
+
   const raiz = document.createElement('div')
   raiz.className = 'fil-seletor'
 
@@ -293,6 +370,8 @@ Rampa sobre ${base.name} (${base.hex}) em 1/2/4/8 camadas`
     'Toque para selecionar. O primeiro da ordem vira a base — a rampa de cada amostra ' +
     'mostra o filamento empilhado em 1/2/4/8 camadas sobre ela.'
 
+  const toolbar = document.createElement('div')
+  toolbar.className = 'fil-toolbar'
   const buscaInput = document.createElement('input')
   buscaInput.type = 'search'
   buscaInput.className = 'fil-busca'
@@ -301,19 +380,103 @@ Rampa sobre ${base.name} (${base.hex}) em 1/2/4/8 camadas`
     busca = buscaInput.value
     render()
   })
+  const botaoComparar = document.createElement('button')
+  botaoComparar.type = 'button'
+  botaoComparar.className = 'fil-btn fil-btn-comparar'
+  botaoComparar.title = 'Pinha duas amostras para ver as rampas lado a lado — a seleção não muda.'
+  botaoComparar.addEventListener('click', () => {
+    comparando = !comparando
+    if (!comparando) {
+      compararA = null
+      compararB = null
+    }
+    // é estado de interface, não de seleção — render sem aoMudar()
+    render()
+  })
+  toolbar.append(buscaInput, botaoComparar)
+
+  const compararDica = document.createElement('p')
+  compararDica.className = 'fil-dica fil-dica-comparar oculto'
+  compararDica.textContent = 'Toque em duas amostras para comparar as rampas lado a lado — a seleção fica intacta.'
 
   const chips = document.createElement('ol')
   chips.className = 'fil-lista-selecionados'
 
-  const grade = document.createElement('div')
-  grade.className = 'fil-grade'
+  const painelComparar = document.createElement('div')
+  painelComparar.className = 'fil-comparar oculto'
 
-  raiz.append(dica, buscaInput, chips, grade, formularioManual())
+  const gradeContainer = document.createElement('div')
+  gradeContainer.className = 'fil-grade-container'
+
+  raiz.append(dica, toolbar, compararDica, chips, painelComparar, gradeContainer, formularioManual())
+
+  // --- render ---
+
+  const renderComparar = (): void => {
+    painelComparar.replaceChildren()
+    if (!comparando) {
+      painelComparar.classList.add('oculto')
+      return
+    }
+    painelComparar.classList.remove('oculto')
+
+    const itemDe = (marca: 'A' | 'B', f: Filament | null, dica?: string): HTMLElement => {
+      const item = document.createElement('div')
+      item.className = 'fil-comparar-item'
+      if (!f) {
+        const p = document.createElement('p')
+        p.className = 'fil-comparar-placeholder'
+        p.textContent = dica ?? `Escolha a amostra ${marca}.`
+        item.append(p)
+        return item
+      }
+      const rotulo = document.createElement('span')
+      rotulo.className = 'fil-comparar-marca'
+      rotulo.textContent = marca
+      const swatch = document.createElement('span')
+      swatch.className = 'fil-swatch'
+      swatch.style.backgroundColor = f.hex
+      const nome = document.createElement('span')
+      nome.className = 'fil-amostra-nome'
+      nome.textContent = f.name
+      const td = document.createElement('span')
+      td.className = 'fil-amostra-td'
+      td.textContent = `TD ${f.td.toFixed(1).replace('.', ',')} mm`
+      item.append(rotulo, swatch, rampaDe(f), nome, td)
+      return item
+    }
+
+    painelComparar.append(itemDe('A', compararA), itemDe('B', compararB, 'Escolha uma segunda amostra para comparar.'))
+  }
+
+  const secaoDe = (titulo: string, lista: Filament[]): HTMLElement => {
+    const secao = document.createElement('div')
+    secao.className = 'fil-secao'
+    const h = document.createElement('p')
+    h.className = 'fil-secao-titulo'
+    h.textContent = titulo
+    secao.append(h)
+
+    const grade = document.createElement('div')
+    grade.className = 'fil-grade'
+    let emNeutros = false
+    for (const f of lista) {
+      const neutro = grupoDe(f) === 'neutro'
+      if (neutro && !emNeutros) {
+        emNeutros = true
+        const rotulo = document.createElement('p')
+        rotulo.className = 'fil-grupo-rotulo'
+        rotulo.textContent = 'Neutros'
+        grade.append(rotulo)
+      }
+      grade.append(cardAmostra(f))
+    }
+    secao.append(grade)
+    return secao
+  }
 
   const render = (): void => {
     chips.replaceChildren()
-    grade.replaceChildren()
-
     if (estado.length === 0) {
       const li = document.createElement('li')
       li.className = 'fil-chip'
@@ -324,22 +487,36 @@ Rampa sobre ${base.name} (${base.hex}) em 1/2/4/8 camadas`
       estado.forEach((f, i) => chips.append(chipDe(f, i)))
     }
 
-    const mostraveis = visiveis()
-    if (mostraveis.length === 0) {
+    botaoComparar.textContent = comparando ? 'Concluir comparação' : 'Comparar'
+    botaoComparar.classList.toggle('ativo', comparando)
+    compararDica.classList.toggle('oculto', !comparando)
+
+    renderComparar()
+
+    gradeContainer.replaceChildren()
+    let achou = false
+    const secoes: [string, Filament[]][] = []
+    if (manuais.length > 0) secoes.push(['Meus rolos', manuais])
+    secoes.push(['Catálogo', FILAMENTS])
+    for (const [titulo, lista] of secoes) {
+      const visiveis = ordenadas(filtradas(lista))
+      if (visiveis.length === 0) continue
+      achou = true
+      gradeContainer.append(secaoDe(titulo, visiveis))
+    }
+    if (!achou) {
       const vazio = document.createElement('p')
       vazio.className = 'fil-busca-vazia'
       vazio.textContent = 'Nenhum filamento encontrado para essa busca.'
-      grade.append(vazio)
-    } else {
-      mostraveis.forEach((f) => grade.append(cardAmostra(f)))
+      gradeContainer.append(vazio)
     }
   }
 
   /**
-   * Ponto único por onde toda mutação do estado passa. Redesenhar aqui, e não em
-   * cada chamador, é o que garante que a lista de escolhidos, a ordem, a marca de
-   * "base" e as rampas (que dependem da base) acompanhem o clique. Sem isto, a
-   * pessoa clica numa amostra e nada muda na tela.
+   * Ponto único por onde toda mutação do estado (seleção) passa. Redesenhar
+   * aqui, e não em cada chamador, é o que garante que a lista de escolhidos, a
+   * ordem, a marca de "base" e as rampas (que dependem da base) acompanhem o
+   * clique. Sem isto, a pessoa clica numa amostra e nada muda na tela.
    */
   function mudou(): void {
     render()

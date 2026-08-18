@@ -66,6 +66,24 @@ export function linearToLab(c: LinearRGB): Lab {
 
 export const rgbToLab = (c: RGB): Lab => linearToLab(toLinear(c))
 
+const finv = (t: number): number => (t > DELTA ? t ** 3 : 3 * DELTA ** 2 * (t - 4 / 29))
+
+/** Inversa de `linearToLab` — usada pelo tone map, que remapeia em Lab e precisa voltar pra RGB. */
+export function labToLinear(c: Lab): LinearRGB {
+  const [L, a, b] = c
+  const fy = (L + 16) / 116
+  const fx = fy + a / 500
+  const fz = fy - b / 200
+  const x = WHITE[0] * finv(fx)
+  const y = WHITE[1] * finv(fy)
+  const z = WHITE[2] * finv(fz)
+  return [
+    3.2404542 * x - 1.5371385 * y - 0.4985314 * z,
+    -0.969266 * x + 1.8760108 * y + 0.041556 * z,
+    0.0556434 * x - 0.2040259 * y + 1.0572252 * z,
+  ]
+}
+
 /**
  * CIE76. Grosseiro perto do azul saturado, mas 4× mais barato que o CIEDE2000
  * e o solver roda isto milhões de vezes.

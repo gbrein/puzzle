@@ -315,3 +315,26 @@ export function montarCrop(
   aoInfo?.(Math.round(rect.w), Math.round(rect.h))
   return { obterBitmap }
 }
+
+/**
+ * Desenha o `bitmap` recortado num canvas pequeno — a miniatura que substitui o
+ * canvas de recorte depois de aplicado. O `putImageData` não redimensiona, então
+ * passa por uma tela intermediária em resolução cheia e reamostra com `drawImage`.
+ */
+export function desenharMiniatura(canvas: HTMLCanvasElement, bitmap: Bitmap, maxLado = 200): void {
+  const escala = Math.min(1, maxLado / Math.max(bitmap.width, bitmap.height))
+  const w = Math.max(1, Math.round(bitmap.width * escala))
+  const h = Math.max(1, Math.round(bitmap.height * escala))
+  canvas.width = w
+  canvas.height = h
+  const ctx = canvas.getContext('2d')
+  if (!ctx) throw new Error('canvas 2d indisponível')
+  const tela = document.createElement('canvas')
+  tela.width = bitmap.width
+  tela.height = bitmap.height
+  tela
+    .getContext('2d')!
+    .putImageData(new ImageData(new Uint8ClampedArray(bitmap.data), bitmap.width, bitmap.height), 0, 0)
+  ctx.imageSmoothingEnabled = true
+  ctx.drawImage(tela, 0, 0, w, h)
+}

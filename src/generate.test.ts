@@ -136,6 +136,28 @@ test('maxSwaps é respeitado contando a troca base → primeira cor', () => {
   }
 })
 
+test('usedFilaments expõe o que maxSwaps deixou de fora, em vez de esconder em silêncio', () => {
+  // maxSwaps: 1 só permite base + 1 troca — no máximo 2 dos 4 filamentos escolhidos entram
+  const r = generatePuzzle({ ...BASE, maxSwaps: 1 })
+  assert.ok(r.usedFilaments.length <= 2, `maxSwaps 1 devia limitar a 2 filamentos, veio ${r.usedFilaments.length}`)
+  assert.ok(r.usedFilaments.length < ESCOLHIDAS.length, 'esperava que nem todos os 4 escolhidos entrassem')
+
+  // todo filamento usado veio da seleção, sem repetição, e a base é sempre o primeiro
+  const escolhidos = new Set(ESCOLHIDAS.map((f) => f.id))
+  for (const f of r.usedFilaments) assert.ok(escolhidos.has(f.id), `${f.id} não estava na seleção`)
+  assert.equal(new Set(r.usedFilaments.map((f) => f.id)).size, r.usedFilaments.length, 'usedFilaments repetiu um id')
+  assert.equal(r.usedFilaments[0].id, r.plan.base.id)
+
+  // com folga de maxSwaps o teto sai de cena — o que sobra é só o que o
+  // schedule achou por bem usar (pode ser menos que os 4 escolhidos, se a
+  // busca decidir que repetir um filamento serve melhor à foto)
+  const folgado = generatePuzzle({ ...BASE, maxSwaps: 3 })
+  assert.ok(
+    folgado.usedFilaments.length >= 1 && folgado.usedFilaments.length <= escolhidos.size,
+    `usedFilaments fora da faixa: ${folgado.usedFilaments.length}`,
+  )
+})
+
 test('os dois modos de troca geram projetos diferentes com a MESMA geometria', () => {
   const manual = generatePuzzle({ ...BASE, swapMode: 'manual' })
   const ams = generatePuzzle({ ...BASE, swapMode: 'ams' })

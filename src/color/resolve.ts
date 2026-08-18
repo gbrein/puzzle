@@ -2,6 +2,7 @@ import { buildPalette } from './beer-lambert.ts'
 import { ditherToPalette } from './dither.ts'
 import { searchSchedule } from './schedule.ts'
 import { renderHeightMap, solveHeights } from './solver.ts'
+import { toneMap, type ToneMapOptions } from './tone.ts'
 import { resizeBitmap } from '../image/resize.ts'
 import type { Bitmap, Filament, HeightMap, LayerPlan, Palette } from './types.ts'
 
@@ -32,6 +33,8 @@ export interface ResolveOptions {
   maxSwaps: number
   dither: boolean
   seed: number
+  /** 'auto' (default): remapeia a foto pro que os filamentos alcançam. 'off' desliga. */
+  toneMap?: ToneMapOptions['mode']
 }
 
 export interface ResolveResult {
@@ -40,7 +43,7 @@ export interface ResolveResult {
   heightMap: HeightMap
   /** Como a placa vai ficar impressa — cabe direto num ImageData. */
   preview: Bitmap
-  /** A foto reamostrada na grade de células — é contra ela que o ΔE se mede. */
+  /** A foto reamostrada e com o tone map aplicado — é contra ela que o ΔE se mede. */
   target: Bitmap
   cols: number
   rows: number
@@ -53,7 +56,13 @@ export function resolveColor(image: Bitmap, filaments: Filament[], o: ResolveOpt
   // Reamostrar ANTES de ditherizar. O padrão de Floyd-Steinberg só faz sentido
   // na resolução em que vai ser impresso; ditherizar em 4000px e reduzir depois
   // mistura os pixels de volta e joga fora o trabalho.
-  const alvo = resizeBitmap(image, cols, rows)
+  //
+  // O tone map roda AQUI, uma vez, antes da busca de cronograma e antes do
+  // casamento final — nunca dentro do laço da busca. Ele só depende do
+  // catálogo de filamentos escolhido (não do cronograma candidato), então
+  // recalcular por candidato seria trabalho jogado fora: converter pra Lab e
+  // voltar é barato uma vez, caro milhares de vezes.
+  const alvo = toneMap(resizeBitmap(image, cols, rows), filaments, { mode: o.toneMap })
 
   const plan = searchSchedule(alvo, filaments, {
     layerHeight: o.layerHeight,

@@ -1,7 +1,10 @@
-/* Grade de amostras de filamento + paleta ao vivo.
- * Classes com prefixo `fil-` para não colidir com o style.css global (lane B).
- * Importado pelo próprio filamentos.ts e paleta.ts — o Vite resolve.
+/* Seletor de filamento + paleta ao vivo.
+ * Classes com prefixo `fil-` para não colidir com o style.css global (lane A).
+ * Cores e espaçamento usam os tokens do `:root` do style.css via var() — se a
+ * lane A mudar o tema, isto acompanha sem editar o arquivo dela.
  */
+
+/* --- estrutura --- */
 
 .fil-seletor {
   display: flex;
@@ -9,25 +12,134 @@
   gap: 12px;
 }
 
-.fil-busca {
-  width: 100%;
-  padding: 8px 10px;
-  border: 1px solid #2a3340;
-  border-radius: 8px;
-  background: #151b23;
-  color: #e6edf3;
-  font-size: 13px;
-}
-
-.fil-busca:focus {
-  outline: none;
-  border-color: #4f8cff;
+.fil-seletor button {
+  font: inherit;
 }
 
 .fil-dica {
   margin: 0;
   font-size: 12px;
-  color: #93a1b3;
+  line-height: 1.45;
+  color: var(--mudo);
+}
+
+.fil-dica-comparar {
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: rgba(79, 140, 255, 0.08);
+  border: 1px solid rgba(79, 140, 255, 0.25);
+  color: var(--destaque-hover);
+}
+
+.fil-toolbar {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.fil-busca {
+  flex: 1;
+  min-width: 0;
+  padding: 8px 12px;
+  border: 1px solid var(--borda);
+  border-radius: 8px;
+  background: var(--painel-2);
+  color: var(--texto);
+  font-size: 13px;
+}
+
+.fil-busca::placeholder {
+  color: var(--mudo);
+  opacity: 0.7;
+}
+
+.fil-busca:focus-visible,
+.fil-grupo input:focus-visible {
+  outline: 2px solid var(--destaque);
+  outline-offset: 1px;
+  border-color: transparent;
+}
+
+/* --- botões --- */
+
+.fil-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 7px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--borda);
+  background: var(--painel-2);
+  color: var(--texto);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition:
+    border-color 0.12s ease,
+    background-color 0.12s ease,
+    color 0.12s ease;
+}
+
+.fil-btn:hover:not(:disabled) {
+  border-color: var(--destaque);
+}
+
+.fil-btn:focus-visible {
+  outline: 2px solid var(--destaque);
+  outline-offset: 1px;
+}
+
+.fil-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.fil-btn-primario {
+  background: var(--destaque);
+  border-color: var(--destaque);
+  color: #fff;
+}
+
+.fil-btn-primario:hover:not(:disabled) {
+  background: var(--destaque-hover);
+  border-color: var(--destaque-hover);
+}
+
+.fil-btn-comparar {
+  white-space: nowrap;
+}
+
+.fil-btn-comparar.ativo {
+  background: var(--destaque);
+  border-color: var(--destaque);
+  color: #fff;
+}
+
+.fil-btn-chip {
+  background: none;
+  border: none;
+  color: var(--mudo);
+  font-size: 13px;
+  line-height: 1;
+  padding: 2px 5px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.fil-btn-chip:hover:not(:disabled) {
+  color: var(--texto);
+  background: var(--painel);
+}
+
+.fil-btn-chip:focus-visible {
+  outline: 2px solid var(--destaque);
+  outline-offset: 1px;
+}
+
+.fil-btn-chip:disabled {
+  opacity: 0.3;
+  cursor: default;
 }
 
 /* --- ordem do cronograma --- */
@@ -45,23 +157,28 @@
   display: flex;
   align-items: center;
   gap: 8px;
-  background: #1b232e;
-  border: 1px solid #2a3340;
+  background: var(--painel-2);
+  border: 1px solid var(--borda);
   border-radius: 8px;
-  padding: 6px 10px;
+  padding: 7px 10px;
   font-size: 13px;
+  transition: border-color 0.12s ease;
+}
+
+.fil-chip:hover {
+  border-color: #3a4553;
 }
 
 .fil-chip-pos {
-  color: #4f8cff;
+  color: var(--destaque);
   font-weight: 600;
   min-width: 22px;
 }
 
 .fil-chip-swatch {
-  width: 14px;
-  height: 14px;
-  border-radius: 3px;
+  width: 16px;
+  height: 16px;
+  border-radius: 4px;
   border: 1px solid rgba(255, 255, 255, 0.2);
   flex-shrink: 0;
 }
@@ -75,7 +192,7 @@
 }
 
 .fil-chip-td {
-  color: #93a1b3;
+  color: var(--mudo);
   font-size: 11px;
   white-space: nowrap;
 }
@@ -85,71 +202,119 @@
   gap: 2px;
 }
 
-.fil-btn-chip {
-  background: none;
-  border: none;
-  color: #93a1b3;
-  font-size: 13px;
-  line-height: 1;
-  padding: 2px 5px;
-  border-radius: 4px;
-  cursor: pointer;
-}
-
-.fil-btn-chip:hover:not(:disabled) {
-  color: #e6edf3;
-  background: #151b23;
-}
-
-.fil-btn-chip:disabled {
-  opacity: 0.3;
-  cursor: default;
-}
-
 .fil-base-selo {
   font-size: 10px;
-  padding: 1px 6px;
+  font-weight: 600;
+  padding: 1px 7px;
   border-radius: 999px;
   background: rgba(79, 140, 255, 0.15);
-  border: 1px solid #4f8cff;
-  color: #6ba1ff;
+  border: 1px solid var(--destaque);
+  color: var(--destaque-hover);
   white-space: nowrap;
+  letter-spacing: 0.04em;
 }
 
 /* --- grade de amostras --- */
 
+/* A grade rola dentro do próprio painel, em vez de empurrar a página inteira —
+ * eram os 30 itens do catálogo fazendo a página pular. */
+.fil-grade-container {
+  max-height: 320px;
+  overflow-y: auto;
+  padding-right: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.fil-secao-titulo {
+  margin: 0 0 8px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--mudo);
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.fil-secao-titulo::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--borda);
+}
+
 .fil-grade {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(92px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(118px, 1fr));
   gap: 8px;
+}
+
+.fil-grupo-rotulo {
+  grid-column: 1 / -1;
+  margin: 2px 0 0;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--mudo);
+  opacity: 0.8;
 }
 
 .fil-amostra {
   position: relative;
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  padding: 6px;
-  background: #1b232e;
-  border: 1px solid #2a3340;
-  border-radius: 8px;
+  gap: 5px;
+  padding: 8px;
+  background: var(--painel-2);
+  border: 1px solid var(--borda);
+  border-radius: 10px;
   cursor: pointer;
   text-align: left;
-  color: #e6edf3;
-  font: inherit;
-  transition: border-color 0.12s ease, background-color 0.12s ease;
+  color: var(--texto);
+  transition:
+    border-color 0.12s ease,
+    background-color 0.12s ease,
+    transform 0.12s ease,
+    box-shadow 0.12s ease;
 }
 
 .fil-amostra:hover {
-  border-color: #4f8cff;
+  border-color: var(--destaque);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.3);
+}
+
+.fil-amostra:focus-visible {
+  outline: 2px solid var(--destaque);
+  outline-offset: 1px;
 }
 
 .fil-amostra.ativo {
-  border-color: #4f8cff;
-  box-shadow: 0 0 0 1px #4f8cff;
+  border-color: var(--destaque);
+  box-shadow: 0 0 0 1px var(--destaque);
   background: #16202e;
 }
 
+.fil-amostra.comparando .fil-swatch {
+  opacity: 0.85;
+}
+
+.fil-amostra.comparado {
+  border-color: var(--ok);
+  box-shadow: 0 0 0 1px var(--ok);
+}
+
+/*
+ * Cor chapada, e só. Havia aqui um xadrez de transparência por baixo, na
+ * suposição de que o `background-color` inline o cobriria — mas em CSS o
+ * `background-image` pinta SEMPRE acima do `background-color`, então o xadrez
+ * ficava por cima e nenhuma amostra dava para ler. E ele não tinha o que
+ * indicar: cor de filamento é hex opaco. Quem mostra a translucidez é a rampa
+ * logo abaixo, que sai do Beer-Lambert de verdade.
+ */
 .fil-swatch {
   display: block;
   width: 100%;
@@ -165,79 +330,166 @@
 }
 
 .fil-rampa-celula {
-  height: 12px;
-  border-radius: 2px;
+  height: 14px;
+  border-radius: 3px;
   border: 1px solid rgba(255, 255, 255, 0.12);
 }
 
 .fil-amostra-nome {
-  font-size: 11px;
-  line-height: 1.25;
-  color: #93a1b3;
+  font-size: 11.5px;
+  line-height: 1.3;
+  color: var(--texto);
   overflow: hidden;
   display: -webkit-box;
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
 }
 
+.fil-amostra-td {
+  font-size: 11px;
+  color: var(--mudo);
+}
+
 .fil-amostra-check {
   position: absolute;
-  top: 8px;
-  right: 8px;
-  width: 18px;
-  height: 18px;
+  top: 6px;
+  right: 6px;
+  width: 19px;
+  height: 19px;
   border-radius: 50%;
-  background: #4f8cff;
+  background: var(--destaque);
   color: #fff;
   font-size: 12px;
   font-weight: 700;
   display: none;
   align-items: center;
   justify-content: center;
+  pointer-events: none;
 }
 
 .fil-amostra.ativo .fil-amostra-check {
   display: flex;
 }
 
+.fil-amostra-badge {
+  position: absolute;
+  top: 6px;
+  left: 6px;
+  width: 19px;
+  height: 19px;
+  border-radius: 50%;
+  background: var(--ok);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+}
+
 .fil-badge-estimado {
   font-size: 10px;
+  font-weight: 600;
   padding: 1px 6px;
   border-radius: 999px;
-  background: #3a2d12;
-  border: 1px solid #d29922;
-  color: #f2d394;
+  background: var(--aviso-fundo);
+  border: 1px solid var(--aviso-borda);
+  color: var(--aviso-texto);
   white-space: nowrap;
   width: fit-content;
+  letter-spacing: 0.03em;
 }
 
 .fil-busca-vazia {
-  color: #93a1b3;
+  color: var(--mudo);
   font-size: 13px;
   margin: 0;
+  padding: 8px 0;
+}
+
+/* --- comparar --- */
+
+.fil-comparar {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  border: 1px solid var(--borda);
+  border-radius: 10px;
+  padding: 10px;
+  background: var(--painel);
+}
+
+.fil-comparar-item {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 10px;
+  border: 1px solid var(--borda);
+  border-radius: 8px;
+  background: var(--painel-2);
+  min-width: 0;
+}
+
+.fil-comparar-marca {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  width: 19px;
+  height: 19px;
+  border-radius: 50%;
+  background: var(--ok);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.fil-comparar-placeholder {
+  margin: auto;
+  font-size: 12px;
+  color: var(--mudo);
+  text-align: center;
+  border: 1px dashed var(--borda);
+  border-radius: 8px;
+  padding: 18px 10px;
 }
 
 /* --- rolo manual --- */
 
 details.fil-manual {
-  border: 1px solid #2a3340;
-  border-radius: 8px;
+  border: 1px solid var(--borda);
+  border-radius: 10px;
   padding: 10px 12px;
+  background: var(--painel);
 }
 
 .fil-manual summary {
   cursor: pointer;
-  color: #93a1b3;
+  color: var(--mudo);
   font-size: 13px;
+  font-weight: 500;
+  user-select: none;
+}
+
+.fil-manual summary:hover {
+  color: var(--texto);
+}
+
+.fil-manual[open] summary {
+  color: var(--texto);
+  margin-bottom: 10px;
 }
 
 .fil-manual-form {
   display: flex;
   flex-direction: column;
   gap: 8px;
-  margin-top: 10px;
   padding-top: 10px;
-  border-top: 1px solid #2a3340;
+  border-top: 1px solid var(--borda);
 }
 
 .fil-manual-linha {
@@ -261,70 +513,30 @@ details.fil-manual {
 
 .fil-grupo > span {
   font-size: 11px;
-  color: #93a1b3;
+  color: var(--mudo);
 }
 
 .fil-grupo input {
-  padding: 6px 8px;
-  border: 1px solid #2a3340;
-  border-radius: 6px;
-  background: #151b23;
-  color: #e6edf3;
+  padding: 7px 9px;
+  border: 1px solid var(--borda);
+  border-radius: 8px;
+  background: var(--painel-2);
+  color: var(--texto);
   font-size: 13px;
   width: 100%;
 }
 
-.fil-grupo input:focus {
-  outline: none;
-  border-color: #4f8cff;
-}
-
 .fil-grupo input[type='color'] {
-  width: 46px;
-  height: 32px;
+  width: 48px;
+  height: 34px;
   padding: 2px;
   cursor: pointer;
 }
 
 .fil-erro-form {
-  color: #ffb3ac;
+  color: var(--erro-texto);
   font-size: 12px;
   margin: 0;
-}
-
-.fil-btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  padding: 7px 12px;
-  border-radius: 8px;
-  border: 1px solid #2a3340;
-  background: #1b232e;
-  color: #e6edf3;
-  font-size: 13px;
-  font-weight: 500;
-  cursor: pointer;
-}
-
-.fil-btn:hover:not(:disabled) {
-  border-color: #4f8cff;
-}
-
-.fil-btn:disabled {
-  opacity: 0.45;
-  cursor: not-allowed;
-}
-
-.fil-btn-primario {
-  background: #4f8cff;
-  border-color: #4f8cff;
-  color: #fff;
-}
-
-.fil-btn-primario:hover:not(:disabled) {
-  background: #6ba1ff;
-  border-color: #6ba1ff;
 }
 
 /* --- paleta ao vivo --- */
@@ -338,18 +550,20 @@ details.fil-manual {
 
 .fil-paleta-titulo {
   margin: 0;
-  font-size: 12px;
-  color: #93a1b3;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--mudo);
   text-transform: uppercase;
-  letter-spacing: 0.05em;
+  letter-spacing: 0.08em;
 }
 
 .fil-bar {
   display: flex;
-  height: 18px;
-  border-radius: 4px;
+  height: 20px;
+  border-radius: 5px;
   overflow: hidden;
-  border: 1px solid #2a3340;
+  border: 1px solid var(--borda);
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.4);
 }
 
 .fil-bar-faixa {
@@ -366,14 +580,15 @@ details.fil-manual {
 .fil-gama-titulo {
   margin: 0;
   font-size: 12px;
-  color: #e6edf3;
+  color: var(--texto);
+  font-variant-numeric: tabular-nums;
 }
 
 .fil-gama-trilho {
   position: relative;
   height: 10px;
-  background: #151b23;
-  border: 1px solid #2a3340;
+  background: var(--painel);
+  border: 1px solid var(--borda);
   border-radius: 999px;
 }
 
@@ -381,7 +596,7 @@ details.fil-manual {
   position: absolute;
   inset: 0 auto 0 0;
   border-radius: 999px;
-  background: linear-gradient(90deg, #3fb950, #4f8cff);
+  background: linear-gradient(90deg, var(--ok), var(--destaque));
 }
 
 .fil-gama-marcador {
@@ -389,35 +604,38 @@ details.fil-manual {
   top: -3px;
   bottom: -3px;
   width: 2px;
-  background: #d29922;
+  background: var(--aviso-borda);
 }
 
 .fil-gama-rotulos {
   display: flex;
   justify-content: space-between;
   font-size: 11px;
-  color: #93a1b3;
+  color: var(--mudo);
 }
 
 .fil-gama-aviso {
   margin: 0;
   padding: 8px 10px;
-  border-radius: 6px;
-  background: #3a2d12;
-  border: 1px solid #d29922;
-  color: #f2d394;
+  border-radius: 8px;
+  background: var(--aviso-fundo);
+  border: 1px solid var(--aviso-borda);
+  color: var(--aviso-texto);
   font-size: 12px;
+  line-height: 1.4;
 }
 
 .fil-nota {
   margin: 0;
   font-size: 11px;
-  color: #93a1b3;
+  color: var(--mudo);
   font-style: italic;
+  line-height: 1.4;
 }
 
 .fil-vazio {
   margin: 0;
   font-size: 13px;
-  color: #93a1b3;
+  color: var(--mudo);
+  line-height: 1.45;
 }

@@ -5,7 +5,7 @@ import { criarVisualizador3D, type Visualizador3D } from '../preview/preview3d.t
 import { cancelar, gerarNoWorker, type Progresso } from '../worker/client.ts'
 import { montarFilamentos } from './filamentos.ts'
 import { montarPaleta } from './paleta.ts'
-import { montarCrop, montarUpload } from './foto.ts'
+import { desenharMiniatura, montarCrop, montarUpload } from './foto.ts'
 import {
   consequenciaDoNivel,
   NIVEIS_DIFICULDADE,
@@ -67,14 +67,18 @@ interface Configuracao {
 const configuracao: Configuracao = {
   size: 180,
   pieceCount: 20,
-  layers: 25,
-  layerHeight: 0.16,
+  // 50 × 0,08 = os mesmos 4mm de relevo que 25 × 0,16, com o DOBRO de níveis de
+  // tom. 0,08mm é o piso físico com bico de 0,4mm — ver a medição no generate.ts.
+  layers: 50,
+  layerHeight: 0.08,
   baseThickness: 2.4,
   maxSwaps: 3,
   kerf: 0.4,
   dither: false,
   extrusionWidth: 0.42,
-  swapMode: 'manual',
+  // default AMS (decisão do Guilherme): a prévia do slicer sai colorida. O modo
+  // manual continua disponível no avançado, para P1S sem AMS.
+  swapMode: 'ams',
   printerModel: '',
 }
 
@@ -213,7 +217,19 @@ const infoCrop = cria('span', 'info')
 const botaoAplicar = cria('button', 'btn btn-primario', 'Aplicar recorte')
 linhaCrop.append(infoCrop, botaoAplicar)
 areaCrop.append(linhaCrop)
-painelFoto.append(tituloFoto, areaUpload, areaCrop)
+
+// Depois de aplicar, a foto vira miniatura — o canvas grande só aparece enquanto
+// se recorta, senão empurra cores e controles para baixo da dobra.
+const areaMiniatura = cria('div', 'miniatura oculto')
+const canvasMiniatura = cria('canvas')
+const infoMiniatura = cria('span', 'info')
+const botaoAjustar = cria('button', 'btn', 'Ajustar recorte')
+const botaoTrocarFoto = cria('button', 'btn', 'Trocar foto')
+const linhaMiniatura = cria('div', 'linha-miniatura')
+linhaMiniatura.append(infoMiniatura, botaoAjustar, botaoTrocarFoto)
+areaMiniatura.append(canvasMiniatura, linhaMiniatura)
+
+painelFoto.append(tituloFoto, areaUpload, areaCrop, areaMiniatura)
 
 // --- coluna esquerda: cores ---
 
@@ -326,10 +342,15 @@ const controlesAvancados = [
   controleNumero({
     rotulo: 'Camadas de cor',
     min: 1,
-    max: 60,
+    // 120 e não 60: o que importa é a ESPESSURA de cor, e ela é camadas ×
+    // altura. Com 60 de teto, quem baixa a camada para 0,04mm fica preso em
+    // 2,4mm — abaixo dos 4mm onde o erro para de cair.
+    max: 120,
     passo: 1,
     valor: configuracao.layers,
-    formatar: (v) => `${v} camadas`,
+    // Mostra os mm junto: é a espessura que decide se a cor acontece, e é ela
+    // que a pessoa sente na mão como relevo. "50 camadas" sozinho não diz nada.
+    formatar: (v) => `${v} camadas · ${(v * configuracao.layerHeight).toFixed(2).replace('.', ',')} mm de cor`,
     aoMudar: (v) => {
       configuracao.layers = v
       agendarPreview()
@@ -446,10 +467,15 @@ bloco3d.append(container3d, estadoVazio3d)
 const statusCor = cria('p', 'status-cor')
 painelPreview.append(tituloPreview, abasPreview, bloco2d, bloco3d, statusCor)
 
-const painelStats = cria('section', 'painel oculto')
-const tituloStats = cria('h2', undefined, 'Estatísticas')
+// Stats recolhidas: uma linha com o essencial, o resto atrás de "detalhes" —
+// a prévia é o produto e não pode perder área para os números.
+const painelStats = cria('section', 'painel resumo-painel oculto')
+const resumoLinha = cria('p', 'resumo-linha')
+const detalhesStats = cria('details', 'detalhes-stats')
+const sumarioStats = cria('summary', undefined, 'Detalhes')
 const areaStats = cria('div', 'stats')
-painelStats.append(tituloStats, areaStats)
+detalhesStats.append(sumarioStats, areaStats)
+painelStats.append(resumoLinha, detalhesStats)
 
 const painelDownloads = cria('section', 'painel oculto')
 const tituloDownloads = cria('h2', undefined, 'Baixar')
@@ -492,6 +518,9 @@ montarUpload({
   container: areaUpload,
   aoCarregar: (imagem) => {
     limpaErro()
+    // foto existe — a dropzone sai do caminho e o recorte grande abre
+    areaUpload.classList.add('oculto')
+    areaMiniatura.classList.add('oculto')
     areaCrop.classList.remove('oculto')
     painelCrop = montarCrop(canvasCrop, imagem, (w, h) => {
       infoCrop.textContent = `${w} × ${h} px`
@@ -506,12 +535,43 @@ botaoAplicar.addEventListener('click', () => {
   if (!b) return
   bitmap = b
   limpaErro()
-  infoCrop.textContent = `Recorte aplicado: ${b.width} × ${b.height} px`
+  // recorte fechado: vira miniatura, o canvas grande some
+  areaCrop.classList.add('oculto')
+  areaMiniatura.classList.remove('oculto')
+  desenharMiniatura(canvasMiniatura, b)
+  infoMiniatura.textContent = `${b.width} × ${b.height} px`
   // foto nova muda o alvo do preview — recalcula o caminho de cor
   atualizaDificuldade()
   atualizaLimitesSliderPecas()
   atualizaEstadoVazio()
   agendarPreview()
+  atualizaGerar()
+})
+
+botaoAjustar.addEventListener('click', () => {
+  // reabre o recorte no mesmo canvas, com o último retângulo intacto
+  areaMiniatura.classList.add('oculto')
+  areaCrop.classList.remove('oculto')
+  canvasCrop.scrollIntoView({ behavior: 'smooth', block: 'center' })
+})
+
+botaoTrocarFoto.addEventListener('click', () => {
+  areaMiniatura.classList.add('oculto')
+  areaCrop.classList.add('oculto')
+  areaUpload.classList.remove('oculto')
+  previewWorker?.terminate()
+  previewWorker = null
+  if (temporizadorPreview !== null) {
+    window.clearTimeout(temporizadorPreview)
+    temporizadorPreview = null
+  }
+  bitmap = null
+  resultado = null
+  ultimaPreview = null
+  painelStats.classList.add('oculto')
+  painelDownloads.classList.add('oculto')
+  areaAviso.classList.add('oculto')
+  atualizaEstadoVazio()
   atualizaGerar()
 })
 
@@ -606,8 +666,6 @@ const rodarPreview = (): void => {
 
 const desenhaPreview2d = (preview: Bitmap): void => {
   desenharPreview2D(canvas2d, preview)
-  // o quadro do canvas acompanha a proporção da foto — sem distorcer a cor
-  canvas2d.style.aspectRatio = `${preview.width} / ${preview.height}`
   canvas2d.classList.remove('oculto')
   estadoVazio2d.classList.add('oculto')
 }
@@ -813,6 +871,20 @@ const mostraResultado = (res: GenerateResult): void => {
 
   // stats — placas e gramas vêm da lane C; só mostram quando a geração devolver
   const extras = s as typeof s & { plates?: number; grams?: number }
+  const resumo: string[] = [
+    `${s.pieces} peças (${s.cols}×${s.rows})`,
+    `${s.width}×${s.height} mm`,
+    `${s.swaps} trocas`,
+    `ΔE ${s.deltaE.toFixed(1)}`,
+    `gama ${s.paletteSpan.toFixed(0)}`,
+    `${s.meshMB.toFixed(1)} MB`,
+  ]
+  if (extras.plates !== undefined) {
+    resumo.push(`${extras.plates} ${extras.plates === 1 ? 'placa' : 'placas'}`)
+  }
+  if (extras.grams !== undefined) resumo.push(`${extras.grams.toFixed(0)} g`)
+  resumoLinha.textContent = resumo.join(' · ')
+
   const itens = [
     stat('Peças', `${s.pieces} (${s.cols}×${s.rows})`),
     stat('Tamanho', `${s.width}×${s.height} mm`),
@@ -856,7 +928,14 @@ const mostraResultado = (res: GenerateResult): void => {
   container3d.classList.remove('oculto')
   estadoVazio3d.classList.add('oculto')
   visualizador = criarVisualizador3D(container3d)
-  visualizador.mostrar(res.mesh)
+  // Com a paleta, o 3D deixa de ser um bloco cinza: a cor de cada vértice sai da
+  // altura dele, então visto de cima o modelo reproduz o preview 2D. Sem isso
+  // não dá para julgar se a foto ficou boa — só se a geometria fechou.
+  visualizador.mostrar(res.mesh, {
+    palette: res.palette,
+    baseZ: res.plan.baseLayers * res.plan.layerHeight,
+    layerHeight: res.plan.layerHeight,
+  })
 }
 
 // ------------------------------------------------------------- bootstrap
