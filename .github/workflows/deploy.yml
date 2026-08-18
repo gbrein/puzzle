@@ -1,0 +1,48 @@
+name: deploy
+
+# O produto é um site estático sem servidor — este workflow é o que o coloca no ar.
+# `vite.config.ts` já usa `base: '/puzzle/'` no build, que é o caminho de um
+# GitHub Pages de projeto (gbrein.github.io/puzzle).
+#
+# Para funcionar, o repositório precisa de Settings → Pages → Source: "GitHub
+# Actions" (uma vez, na mão). Sem isso o passo de deploy falha com permissão.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Uma publicação por vez, sem cancelar a que está em andamento — cancelar no meio
+# deixa o Pages num estado meio publicado.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  publicar:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      # Testar antes de publicar: o site é o produto, e publicar uma build que
+      # não passa nos testes é pior que não publicar.
+      - run: npm test
+      - run: npm run typecheck
+      - run: npm run build
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+      - id: deploy
+        uses: actions/deploy-pages@v4

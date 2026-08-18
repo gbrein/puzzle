@@ -1,0 +1,28 @@
+name: ci
+
+# Verificação em todo push e PR. Existe porque o trabalho aqui é feito por vários
+# agentes em paralelo no mesmo checkout: `npm test` verde na máquina de quem
+# escreveu não prova que a integração ficou verde.
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  verificar:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          # 22.18+ é o piso do projeto: os testes rodam `.ts` direto, pelo type
+          # stripping nativo. Abaixo disso o `node --test` nem carrega os arquivos.
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - run: npm test
+      - run: npm run typecheck
+      - run: npm run build

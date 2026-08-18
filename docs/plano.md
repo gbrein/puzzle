@@ -31,7 +31,11 @@ Pendências que não são código:
 
 - 🔒 Abrir um `.3mf` gerado no Bambu Studio / Orca — nenhum teste cobre "o slicer aceita".
 - 🔒 Imprimir o teste de encaixe — o kerf default (0,4mm) veio de leitura, não de medição.
-- 🔧 Reduzir o RSS da geração — 320MB numa placa de 180mm (era 775MB). Pesado pra aba de navegador.
+- 🔧 RSS da geração, medido de novo em 2026-08-17 com os defaults atuais (20 camadas de 0,08mm,
+  3 filamentos): **159MB** numa placa de 180mm com 20 peças (2,2s, 473k triângulos, `.3mf` de
+  3,8MB), 282MB com 35 peças, e 299MB numa placa de 250mm com 63 peças (4,9s, 974k triângulos,
+  `.3mf` de 8,0MB). Era 775MB antes da malha indexada e 320MB antes do relevo cair de 4mm para
+  1,6mm. Ainda é muito para uma aba com pouca memória, mas deixou de ser o risco principal.
 
 > A trilha completa (o que mudou e quando) está no vault: `projetos/puzzle/log.md` e
 > `projetos/puzzle/roadmap.md` em `github.com/gbrein/vault`.
