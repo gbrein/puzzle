@@ -4,7 +4,7 @@ import { unzipSync } from 'fflate'
 import type { Bitmap, Filament } from './color/types.ts'
 import { imageError } from './color/solver.ts'
 import { resizeBitmap } from './image/resize.ts'
-import { generatePuzzle } from './generate.ts'
+import { generatePuzzle, MM_MINIMO_UTIL_POR_FAIXA } from './generate.ts'
 
 /** Cena sintética com estrutura de foto: gradiente + duas colinas. */
 function foto(width: number, height: number): Bitmap {
@@ -156,6 +156,48 @@ test('usedFilaments expõe o que maxSwaps deixou de fora, em vez de esconder em 
     folgado.usedFilaments.length >= 1 && folgado.usedFilaments.length <= escolhidos.size,
     `usedFilaments fora da faixa: ${folgado.usedFilaments.length}`,
   )
+})
+
+test('layers deriva de maxSwaps — paleta maior ganha relevo mais alto por default', () => {
+  // BASE tem 4 filamentos: maxSwaps default = 3, layers default = 3×10 = 30
+  const quatroFilamentos = generatePuzzle(BASE)
+  const duasCores = generatePuzzle({ ...BASE, filaments: [ESCOLHIDAS[0], ESCOLHIDAS[1]] }) // maxSwaps default = 1, layers = 10
+
+  // totalHeightMm inclui a base (2,4mm/0,08mm = 30 camadas) + o relevo
+  // colorido (maxSwaps × LAYERS_POR_FAIXA(10) × layerHeight default)
+  const alturaEsperada = (maxSwaps: number) => 2.4 + maxSwaps * 10 * 0.08
+  assert.ok(
+    Math.abs(quatroFilamentos.stats.totalHeightMm - alturaEsperada(3)) < 1e-6,
+    `altura de relevo com 4 cores: ${quatroFilamentos.stats.totalHeightMm} ≠ ${alturaEsperada(3)}`,
+  )
+  assert.ok(
+    Math.abs(duasCores.stats.totalHeightMm - alturaEsperada(1)) < 1e-6,
+    `altura de relevo com 2 cores: ${duasCores.stats.totalHeightMm} ≠ ${alturaEsperada(1)}`,
+  )
+  assert.ok(
+    quatroFilamentos.stats.totalHeightMm > duasCores.stats.totalHeightMm,
+    'paleta maior tinha que pedir mais relevo por default',
+  )
+})
+
+test('mmPorFaixa é o número que expõe o acoplamento relevo × número de cores', () => {
+  const r = generatePuzzle(BASE) // 4 filamentos, maxSwaps default 3, layers default 30, layerHeight 0.08
+  const esperado = (30 * 0.08) / 3
+  assert.ok(Math.abs(r.stats.mmPorFaixa - esperado) < 1e-9, `mmPorFaixa ${r.stats.mmPorFaixa} ≠ ${esperado}`)
+  // com o default, mmPorFaixa bate exatamente com LAYERS_POR_FAIXA × layerHeight
+  assert.ok(Math.abs(r.stats.mmPorFaixa - 10 * 0.08) < 1e-9)
+  assert.ok(r.stats.mmPorFaixa >= MM_MINIMO_UTIL_POR_FAIXA, 'o default não devia cair abaixo do próprio limiar que ele define')
+})
+
+test('poucas camadas pra muitas cores: mmPorFaixa avisa em vez de a pessoa descobrir com a peça na mão', () => {
+  // 4 filamentos (3 faixas) espremidos em só 6 camadas totais: 0,08mm/camada,
+  // 6×0,08/3 = 0,16mm por faixa — bem abaixo do limiar medido de 0,5mm
+  const r = generatePuzzle({ ...BASE, layers: 6 })
+  assert.ok(
+    r.stats.mmPorFaixa < MM_MINIMO_UTIL_POR_FAIXA,
+    `esperava mmPorFaixa abaixo do limiar (${MM_MINIMO_UTIL_POR_FAIXA}), veio ${r.stats.mmPorFaixa}`,
+  )
+  assert.ok(Math.abs(r.stats.mmPorFaixa - (6 * 0.08) / 3) < 1e-9)
 })
 
 test('os dois modos de troca geram projetos diferentes com a MESMA geometria', () => {

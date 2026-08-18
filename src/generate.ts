@@ -18,12 +18,70 @@ import { buildPuzzle } from './puzzle.ts'
 const PLA_G_POR_CM3 = 1.24
 
 /**
- * As cores são ESCOLHA DE QUEM USA, não inferência nossa.
+ * RELEVO E NÚMERO DE CORES SÃO ACOPLADOS — um default fixo de camadas erra
+ * num dos dois lados. A definição de TD é literal: em `td` mm de espessura
+ * passam 10% da luz. Com N cores dividindo o mesmo relevo, cada faixa fica
+ * com relevo/(N-1) de espessura própria — pouco pra filamento de TD alto se
+ * N crescer e o relevo não acompanhar junto.
+ *
+ * Medido pelo Guilherme (foto real, cachorro preto sobre madeira, ΔE final
+ * contra a espessura TOTAL do relevo):
+ *   3 rolos (preto+marrom+branco, maxSwaps 2):
+ *     4,00mm 34,49 · 2,40mm 34,49 · 1,60mm 34,59 · 1,20mm 34,71 · 0,96mm 35,10
+ *     — cortar de 4mm pra 1,6mm é DE GRAÇA (Δ 0,10)
+ *   5 rolos coloridos, TD 3–7mm (maxSwaps 4):
+ *     4,00mm 25,16 · 2,40mm 28,20 · 1,60mm 30,90 · 1,20mm 32,81
+ *     — o MESMO corte custa 5,7 de ΔE: degradação real
+ *
+ * A proposta dele foi 10 camadas por faixa (faixas = filaments.length-1, a
+ * base não consome camada de cor). Verifiquei em vez de aceitar de olhos
+ * fechados: testei 6/8/10/14/20 camadas por faixa em paletas de 3, 4 e 5
+ * cores, mesma foto, busca de verdade (`searchSchedule`, maxSwaps = n-1).
+ *
+ * 3 e 4 cores CONFIRMAM a proposta — o ganho de ΔE cai a pique depois de
+ * ~10–14 camadas/faixa; 4 cores satura EXATAMENTE em 10 (ΔE 5,58 idêntico em
+ * 10, 14 e 20 camadas/faixa). 5 cores não deu um resultado limpo: achei que
+ * `materialize` (`color/schedule.ts`) preenche o que sobra repetindo o
+ * ÚLTIMO filamento da faixa sorteada — então mais camadas TOTAIS nem sempre
+ * viram mais espessura pra CADA cor, às vezes só esticam a última faixa
+ * sorteada e as outras ficam do mesmo tamanho que teriam com bem menos
+ * camadas. É um limite real da busca com `maxSwaps` alto e poucas camadas
+ * (confirmei parcialmente: um orçamento de `candidates` maior encontra
+ * cronograma melhor, mas não muda essa insensibilidade a mais camadas), não
+ * desta escolha de default — ponytail: rodada futura, ou `materialize`
+ * distribui o resto proporcionalmente entre faixas, ou o orçamento de busca
+ * cresce com `maxSwaps`. Como o achado do Guilherme (mais controlado, à mão)
+ * concorda com os casos de 3 e 4 cores que consegui confirmar, fica com
+ * 10 camadas por faixa.
+ */
+const LAYERS_POR_FAIXA = 10
+
+/**
+ * Espessura mínima de relevo por faixa pro TD ter onde desenvolver, em mm —
+ * abaixo disso o defeito que motivou o acoplamento acima reaparece: cor de
+ * TD alto (5–7mm no catálogo) mal tinge. Medido junto com `LAYERS_POR_FAIXA`:
+ * em 0,48mm/faixa (6 camadas/faixa a 0,08mm, o mesmo teste acima) o ΔE já
+ * perde de forma clara pro ponto de saturação (~0,8mm/faixa) tanto em 3
+ * quanto em 4 cores. `GenerateResult.stats.mmPorFaixa` é o número pra
+ * interface comparar contra este limiar e avisar ANTES de imprimir.
+ * Exportado pra ninguém duplicar o número 0,5 num arquivo de UI separado.
+ */
+export const MM_MINIMO_UTIL_POR_FAIXA = 0.5
+
+/**
+ * As cores são ESCOLHA DE QUEM USA, não inferência nossa — mas dentro dessa
+ * escolha, a plataforma decide COMO usá-las.
  *
  * A plataforma mostra um seletor: quantas cores e quais. O catálogo de
  * filamentos existe só para pré-preencher o TD; quem tiver um rolo fora da
- * lista digita o hex e o TD medido. `searchSchedule` não escolhe *quais*
- * filamentos — ela só decide em que ordem e em que alturas os escolhidos entram.
+ * lista digita o hex e o TD medido. `searchSchedule` nunca inventa uma cor
+ * que não foi declarada, mas ELA ESCOLHE, dentro do que foi declarado, quais
+ * entram de fato no cronograma — pode ser um subconjunto, se a busca achar
+ * que uma cor a mais não ajuda dentro do orçamento de trocas — além da ordem
+ * e da altura de cada uma. `maxSwaps` (default: `filaments.length - 1`, o
+ * mínimo pra caber toda a seleção) é o orçamento; `usedFilaments` no
+ * resultado é o que entrou de verdade. A seleção continua editável a
+ * qualquer momento — trocar as cores e gerar de novo é sempre a saída.
  */
 export interface GenerateOptions {
   /** A foto, já decodificada. No browser vem de `createImageBitmap` + canvas. */
@@ -38,12 +96,26 @@ export interface GenerateOptions {
   kerf?: number
   seed?: number
 
-  /** Camadas de cor acima da base. Mais camadas = mais tons, print mais alto. */
+  /**
+   * Camadas de cor acima da base. Mais camadas = mais tons, print mais alto.
+   * Default: `Math.max(1, maxSwaps) * LAYERS_POR_FAIXA` (10) — relevo e
+   * número de cores são acoplados (cada filamento precisa de espessura pra
+   * desenvolver a própria cor), então o default acompanha `maxSwaps` em vez
+   * de fixo. Pedir menos que isso pra uma paleta grande é legítimo, mas
+   * confira `stats.mmPorFaixa` — abaixo do limiar documentado ali, a cor
+   * simplesmente não desenvolve.
+   */
   layers?: number
   layerHeight?: number
   /** Espessura da peça abaixo da cor, em mm. Vira um número inteiro de camadas. */
   baseThickness?: number
-  /** Trocas de filamento permitidas, contando base → primeira cor. */
+  /**
+   * Trocas de filamento permitidas, contando base → primeira cor. Default:
+   * `filaments.length - 1` — o mínimo pra caber TODAS as cores escolhidas.
+   * Um valor menor é uma escolha legítima (menos paradas manuais), mas quem
+   * pedir menos que `filaments.length - 1` fica com filamento sobrando —
+   * confira `usedFilaments` no resultado pra saber quais entraram de fato.
+   */
   maxSwaps?: number
   /**
    * Difusão de erro (Floyd-Steinberg). **Desligado por default**, e o motivo é
@@ -144,6 +216,16 @@ export interface GenerateResult {
      * cores mais contrastantes", em vez de deixar a pessoa descobrir imprimindo.
      */
     paletteSpan: number
+    /**
+     * Espessura de relevo por faixa de cor, em mm: `(layers × layerHeight) /
+     * max(1, maxSwaps)`. Relevo e número de cores são acoplados — abaixo de
+     * `MM_MINIMO_UTIL_POR_FAIXA` (0,5mm, medido em `generate.ts`) o TD dos
+     * filamentos mal desenvolve e a cor "some" mesmo com a paleta certa. É o
+     * número que a interface usa pra avisar "poucas camadas pra tantas
+     * cores" ANTES de imprimir, em vez de a pessoa descobrir com a peça na
+     * mão.
+     */
+    mmPorFaixa: number
     /** Quantas placas a impressão vai precisar (peças + moldura, se pedida). */
     plates: number
     /** Massa estimada de filamento, em gramas: volume × 1,24 g/cm³ (PLA). */
@@ -160,32 +242,29 @@ export function generatePuzzle(opts: GenerateOptions): GenerateResult {
     pieceCount = 20,
     kerf = 0.4,
     seed = 1,
-    // Defaults escolhidos por medição, não por gosto, e são DOIS números com
-    // papéis diferentes:
-    //
-    // A ESPESSURA TOTAL de cor (layers × layerHeight) contra o TD dos filamentos
-    // é o que decide se a cor acontece. Com TD típico de 1 a 6mm, 0,96mm de cor
-    // mal sai da cor da base e a paleta vira uma rampa curta e enlameada; 4mm foi
-    // onde o erro parou de cair (ΔE 17,5 → 11,6, estável a partir daí). Por isso
-    // 4mm continua sendo o alvo.
-    //
-    // A ALTURA DE CAMADA, com a espessura total fixa, é quantos DEGRAUS de tom
-    // cabem nesses 4mm. Medido na foto de um cachorro preto sobre madeira, com
-    // preto + marrom + branco (mesmos 4mm em todos os casos):
-    //   25 × 0,16 .... 26 níveis, 21 usados, maior mancha chapada 22,0%, 909k tri
-    //   50 × 0,08 .... 51 níveis, 45 usados, maior mancha chapada 15,1%, 1439k tri
-    //  100 × 0,04 ... 101 níveis, 69 usados, maior mancha chapada 11,7%, 2449k tri
-    // O ΔE satura em 10,2 já no segundo caso — quem continua melhorando é a
-    // gradação, que é o que se vê como banda na peça impressa.
-    //
-    // 0,08mm é o piso FÍSICO com bico de 0,4mm (é o perfil mais fino que o Bambu
-    // Studio oferece para esse bico), e a terceira linha só imprime com bico de
-    // 0,2mm cobrando 44MB de malha por um ΔE igual. Por isso o default é a linha
-    // do meio: o mínimo imprimível, não o mínimo teórico.
-    layers = 50,
+    // Com paleta de n cores, um cronograma que usa todas elas precisa de n-1
+    // trocas (a primeira já é base → cor 1). Um default fixo (era 3) capava
+    // silenciosamente quem escolhia mais que 4 filamentos: a pessoa marcava 6
+    // cores e só 4 entravam na impressão, sem aviso nenhum — `usedFilaments`
+    // dizia o que aconteceu DEPOIS, mas o default já tinha decidido por ela.
+    // `(filaments?.length ?? 1) - 1`, não `filaments.length - 1`: `filaments`
+    // pode chegar `undefined` num caller sem TypeScript, e o guard amigável
+    // duas linhas abaixo tem que rodar antes de qualquer coisa explodir aqui.
+    maxSwaps = (filaments?.length ?? 1) - 1,
+    // Precisa vir DEPOIS de `maxSwaps` na desestruturação: o default lê o
+    // valor já resolvido dele (`LAYERS_POR_FAIXA`, ver a medição no topo do
+    // arquivo — relevo e número de cores são acoplados, o antigo default fixo
+    // de 50 camadas/4mm era 2,5× maior que o necessário no caso comum de 3
+    // cores e ficava CURTO no caso de 5+ cores).
+    layers = Math.max(1, maxSwaps) * LAYERS_POR_FAIXA,
+    // 0,08mm é o piso FÍSICO com bico de 0,4mm (o perfil mais fino que o Bambu
+    // Studio oferece pra esse bico) — testado contra 0,16 e 0,04mm num relevo
+    // de 4mm fixo (antes deste acoplamento; a granularity em si não mudou):
+    // 0,04mm cobra 44MB de malha por um ΔE igual ao de 0,08mm, e 0,16mm perde
+    // gradação visível (banda na peça). Por isso continua o default, agora só
+    // com o TOTAL de camadas acoplado a `maxSwaps` em vez de fixo em 50.
     layerHeight = 0.08,
     baseThickness = 2.4,
-    maxSwaps = 3,
     dither = false,
     toneMap = 'auto',
     extrusionWidth = 0.42,
@@ -328,6 +407,10 @@ export function generatePuzzle(opts: GenerateOptions): GenerateResult {
     ((objetos.reduce((s, o) => s + signedVolume(o.mesh), 0) + (frameMesh ? signedVolume(frameMesh) : 0)) / 1000) *
     PLA_G_POR_CM3
 
+  // mesmo denominador do default de `layers` (Math.max(1, maxSwaps)) — pra o
+  // aviso e a derivação concordarem sobre o que é "uma faixa"
+  const mmPorFaixa = (layers * layerHeight) / Math.max(1, maxSwaps)
+
   return {
     threemf,
     stl: toBinarySTL(mesh, 'puzzle'),
@@ -351,6 +434,7 @@ export function generatePuzzle(opts: GenerateOptions): GenerateResult {
       deltaE: imageError(alvo, preview),
       totalHeightMm: totalHeight(plan),
       paletteSpan: extensaoDaPaleta(palette),
+      mmPorFaixa,
       plates: objetosPorPlaca.length,
       grams: gramas,
     },

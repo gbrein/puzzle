@@ -113,6 +113,14 @@ export function montarCrop(
 
   canvas.width = largura
   canvas.height = altura
+  // Garante que o canvas NUNCA estoure o painel (ele tem até 1600px internos
+  // dentro de um painel de ~300px). O `max-width` inline tem prioridade máxima
+  // sobre qualquer regra de folha. As coordenadas do mouse são convertidas pela
+  // razão getBoundingClientRect ↔ canvas.width/height (ver `paraCoordenadas`),
+  // então o recorte segue o cursor mesmo com o canvas exibido menor que o
+  // tamanho interno — e continua certo se a janela mudar de tamanho.
+  canvas.style.maxWidth = '100%'
+  canvas.style.height = 'auto'
 
   const ctx = canvas.getContext('2d')
   if (!ctx) throw new Error('canvas 2d indisponível')
@@ -126,6 +134,14 @@ export function montarCrop(
   let rect: Retangulo = { x: 0, y: 0, w: largura, h: altura }
   let arrastando: { alca: Alca; xi: number; yi: number; inicio: Retangulo } | null = null
 
+  // Razão entre o tamanho interno do canvas e o exibido — as alças e o cursor
+  // são medidos em PIXELS EXIBIDOS, então o raio de acerto escala junto.
+  const raioDeAcerto = (): number => {
+    const b = canvas.getBoundingClientRect()
+    if (!b.width || b.height === 0) return ALCANCE
+    return ALCANCE * (canvas.width / b.width)
+  }
+
   const paraCoordenadas = (e: PointerEvent): { x: number; y: number } => {
     const b = canvas.getBoundingClientRect()
     return {
@@ -135,8 +151,9 @@ export function montarCrop(
   }
 
   const alcaEm = (x: number, y: number): Alca | null => {
+    const r = raioDeAcerto()
     const perto = (px: number, py: number, cx: number, cy: number): boolean =>
-      Math.abs(px - cx) <= ALCANCE && Math.abs(py - cy) <= ALCANCE
+      Math.abs(px - cx) <= r && Math.abs(py - cy) <= r
     const cx = rect.x + rect.w / 2
     const cy = rect.y + rect.h / 2
     if (perto(x, y, rect.x, rect.y)) return 'nw'

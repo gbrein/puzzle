@@ -1,24 +1,20 @@
 import type { Filament, LayerPlan, RGB } from '../color/types.ts'
-import { FILAMENTS, RESSALVAS } from '../filaments/db.ts'
 import { buildPalette } from '../color/beer-lambert.ts'
 import { parseHex, rgbToLab, toHex, type Lab } from '../color/space.ts'
+import { lerInventario } from './inventario.ts'
 import './filamentos.css'
 
 /**
- * Seletor de filamentos — escolher cor, não nome de rolo.
+ * Seletor de filamentos — escolher a paleta desta foto.
  *
- * Grade de amostras GRANDES ordenada por matiz (H, depois L, via Lab), com os
- * neutros de baixa croma agrupados à parte (preto, branco e cinza não têm
- * matiz definido — o matiz puro os jogaria em posições arbitrárias). Cada
- * amostra mostra a **rampa real** do filamento empilhado em 1/2/4/8 camadas
- * sobre a base atual — é o que revela que dois vermelhos com TD 0,3 e 3,3 se
- * comportam de forma completamente diferente. A rampa custa ~0 ms
- * (`buildPalette`), então pode ser calculada na hora.
- *
- * "Meus rolos" (cadastrados à mão) e catálogo ficam em seções separadas — quem
- * escolhe quer o que TEM à vista, sem o catálogo inteiro no meio do caminho.
- * E há um modo **comparar** que pinha duas amostras lado a lado sem tocar na
- * seleção.
+ * A grade principal é O INVENTÁRIO (o que a pessoa tem), não o catálogo: o
+ * catálogo vive no inventário como "adicionar rolo". Cada amostra mostra a
+ * **rampa real** do filamento empilhado em 1/2/4/8 camadas sobre a base atual —
+ * é o que revela que dois vermelhos com TD 0,3 e 3,3 se comportam de forma
+ * completamente diferente. A rampa custa ~0 ms (`buildPalette`), então pode ser
+ * calculada na hora. Neutros de baixa croma ficam agrupados à parte (preto,
+ * branco e cinza não têm matiz definido). E há um modo **comparar** que pinha
+ * duas amostras lado a lado sem tocar na seleção.
  *
  * Mantém a assinatura `{ container, estado, aoMudar }` — o main.ts chama por ela.
  */
@@ -50,8 +46,6 @@ export function montarFilamentos(opts: {
   aoMudar: () => void
 }): void {
   const { container, estado, aoMudar } = opts
-  const manuais: Filament[] = []
-  let busca = ''
 
   // Estado do modo comparar — é estado de INTERFACE, não de seleção: mexer aqui
   // re-renderiza mas NÃO dispara aoMudar() (a escolha de rolos não mudou).
@@ -103,17 +97,12 @@ export function montarFilamentos(opts: {
 
   const grupoDe = (f: Filament): 'cor' | 'neutro' => (croma(labDe(f)) < CROMA_NEUTRA ? 'neutro' : 'cor')
 
-  /**
-   * Recalculada a cada render, e não uma vez só: `manuais` cresce quando alguém
-   * cadastra um rolo, e uma lista congelada na partida deixaria o rolo novo
-   * fora da grade para sempre.
-   *
-   * Ordem: cores por matiz (e luminosidade), neutros agrupados no fim por
-   * luminosidade — o matiz puro espalharia preto/branco/cinza em posições
-   * arbitrárias, porque eles não têm matiz definido.
-   */
-  const ordenadas = (lista: Filament[]): Filament[] =>
-    [...lista].sort((x, y) => {
+  // Lido a cada render: se o inventário mudar (no gerenciador), o próximo
+  // render já mostra o rolo novo.
+  const inventario = (): Filament[] => lerInventario()
+
+  const ordenadas = (): Filament[] =>
+    [...inventario()].sort((x, y) => {
       const gx = grupoDe(x)
       const gy = grupoDe(y)
       if (gx !== gy) return gx === 'neutro' ? 1 : -1
@@ -123,15 +112,6 @@ export function montarFilamentos(opts: {
       if (hx !== hy) return hx - hy
       return luminosidade(labDe(x)) - luminosidade(labDe(y))
     })
-
-  // Busca sem diferenciar maiúsculas nem acentos: "aze" acha "Azul".
-  const normaliza = (s: string): string => s.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '')
-
-  const filtradas = (lista: Filament[]): Filament[] => {
-    if (!busca) return lista
-    const alvo = normaliza(busca)
-    return lista.filter((f) => normaliza(f.name).includes(alvo))
-  }
 
   // --- modo comparar ---
 
@@ -256,9 +236,6 @@ Rampa sobre ${base.name} (${base.hex}) em 1/2/4/8 camadas`
       btn.append(selo)
     }
 
-    const ressalva = RESSALVAS[f.id]
-    if (ressalva) btn.title = `${f.name} — ${ressalva}\n${btn.title}`
-
     if (comparando) {
       const badge = document.createElement('span')
       badge.className = 'fil-amostra-badge'
@@ -279,84 +256,6 @@ Rampa sobre ${base.name} (${base.hex}) em 1/2/4/8 camadas`
     return btn
   }
 
-  const formularioManual = (): HTMLDetailsElement => {
-    const detalhes = document.createElement('details')
-    detalhes.className = 'fil-manual'
-    const sumario = document.createElement('summary')
-    sumario.textContent = 'Rolo fora do catálogo?'
-    detalhes.append(sumario)
-
-    const form = document.createElement('div')
-    form.className = 'fil-manual-form'
-    const linha = document.createElement('div')
-    linha.className = 'fil-manual-linha'
-
-    const grupoNome = document.createElement('div')
-    grupoNome.className = 'fil-grupo'
-    const rotuloNome = document.createElement('span')
-    rotuloNome.textContent = 'Nome (opcional)'
-    const inputNome = document.createElement('input')
-    inputNome.type = 'text'
-    inputNome.placeholder = 'Ex.: PETG azul da marca X'
-    grupoNome.append(rotuloNome, inputNome)
-
-    const grupoCor = document.createElement('div')
-    grupoCor.className = 'fil-grupo'
-    const rotuloCor = document.createElement('span')
-    rotuloCor.textContent = 'Cor'
-    const inputCor = document.createElement('input')
-    inputCor.type = 'color'
-    inputCor.value = '#d9d4c4'
-    grupoCor.append(rotuloCor, inputCor)
-
-    const grupoTd = document.createElement('div')
-    grupoTd.className = 'fil-grupo'
-    const rotuloTd = document.createElement('span')
-    rotuloTd.textContent = 'TD (mm)'
-    const inputTd = document.createElement('input')
-    inputTd.type = 'number'
-    inputTd.min = '0.1'
-    inputTd.step = '0.1'
-    inputTd.value = '3.0'
-    grupoTd.append(rotuloTd, inputTd)
-
-    const grupoBotao = document.createElement('div')
-    grupoBotao.className = 'fil-grupo'
-    const botao = document.createElement('button')
-    botao.type = 'button'
-    botao.className = 'fil-btn fil-btn-primario'
-    botao.textContent = 'Adicionar'
-    grupoBotao.append(botao)
-
-    linha.append(grupoNome, grupoCor, grupoTd, grupoBotao)
-    form.append(linha)
-
-    const erro = document.createElement('p')
-    erro.className = 'fil-erro-form'
-    erro.style.display = 'none'
-    form.append(erro)
-
-    botao.addEventListener('click', () => {
-      const hex = inputCor.value
-      const td = Number(inputTd.value)
-      if (!Number.isFinite(td) || td <= 0) {
-        erro.textContent = 'TD precisa ser um número positivo, em mm.'
-        erro.style.display = ''
-        return
-      }
-      erro.style.display = 'none'
-      const nome = inputNome.value.trim() || `Rolo ${hex}`
-      const f: Filament = { id: `manual-${hex}-${Date.now()}`, name: nome, hex, td }
-      if (indice(f.id) === -1) estado.push(f)
-      if (!manuais.some((m) => m.id === f.id)) manuais.push(f)
-      inputNome.value = ''
-      mudou()
-    })
-
-    detalhes.append(form)
-    return detalhes
-  }
-
   // --- DOM fixo fora do render ---
   // Recriar a busca a cada tecla faria o input perder o foco a cada caractere
   // digitado; o painel de comparar também é fixo (o conteúdo é que muda).
@@ -367,19 +266,11 @@ Rampa sobre ${base.name} (${base.hex}) em 1/2/4/8 camadas`
   const dica = document.createElement('p')
   dica.className = 'fil-dica'
   dica.textContent =
-    'Toque para selecionar. O primeiro da ordem vira a base — a rampa de cada amostra ' +
-    'mostra o filamento empilhado em 1/2/4/8 camadas sobre ela.'
+    'Estes são os rolos do seu inventário — toque para incluir na paleta desta foto. ' +
+    'O primeiro da ordem vira a base — a rampa mostra o filamento em 1/2/4/8 camadas sobre ela.'
 
   const toolbar = document.createElement('div')
   toolbar.className = 'fil-toolbar'
-  const buscaInput = document.createElement('input')
-  buscaInput.type = 'search'
-  buscaInput.className = 'fil-busca'
-  buscaInput.placeholder = 'Buscar por nome…'
-  buscaInput.addEventListener('input', () => {
-    busca = buscaInput.value
-    render()
-  })
   const botaoComparar = document.createElement('button')
   botaoComparar.type = 'button'
   botaoComparar.className = 'fil-btn fil-btn-comparar'
@@ -393,7 +284,7 @@ Rampa sobre ${base.name} (${base.hex}) em 1/2/4/8 camadas`
     // é estado de interface, não de seleção — render sem aoMudar()
     render()
   })
-  toolbar.append(buscaInput, botaoComparar)
+  toolbar.append(botaoComparar)
 
   const compararDica = document.createElement('p')
   compararDica.className = 'fil-dica fil-dica-comparar oculto'
@@ -408,7 +299,7 @@ Rampa sobre ${base.name} (${base.hex}) em 1/2/4/8 camadas`
   const gradeContainer = document.createElement('div')
   gradeContainer.className = 'fil-grade-container'
 
-  raiz.append(dica, toolbar, compararDica, chips, painelComparar, gradeContainer, formularioManual())
+  raiz.append(dica, toolbar, compararDica, chips, painelComparar, gradeContainer)
 
   // --- render ---
 
@@ -449,39 +340,13 @@ Rampa sobre ${base.name} (${base.hex}) em 1/2/4/8 camadas`
     painelComparar.append(itemDe('A', compararA), itemDe('B', compararB, 'Escolha uma segunda amostra para comparar.'))
   }
 
-  const secaoDe = (titulo: string, lista: Filament[]): HTMLElement => {
-    const secao = document.createElement('div')
-    secao.className = 'fil-secao'
-    const h = document.createElement('p')
-    h.className = 'fil-secao-titulo'
-    h.textContent = titulo
-    secao.append(h)
-
-    const grade = document.createElement('div')
-    grade.className = 'fil-grade'
-    let emNeutros = false
-    for (const f of lista) {
-      const neutro = grupoDe(f) === 'neutro'
-      if (neutro && !emNeutros) {
-        emNeutros = true
-        const rotulo = document.createElement('p')
-        rotulo.className = 'fil-grupo-rotulo'
-        rotulo.textContent = 'Neutros'
-        grade.append(rotulo)
-      }
-      grade.append(cardAmostra(f))
-    }
-    secao.append(grade)
-    return secao
-  }
-
   const render = (): void => {
     chips.replaceChildren()
     if (estado.length === 0) {
       const li = document.createElement('li')
       li.className = 'fil-chip'
       li.style.opacity = '0.7'
-      li.textContent = 'Nenhum filamento escolhido ainda.'
+      li.textContent = 'Nenhum filamento escolhido para esta foto ainda.'
       chips.append(li)
     } else {
       estado.forEach((f, i) => chips.append(chipDe(f, i)))
@@ -494,22 +359,37 @@ Rampa sobre ${base.name} (${base.hex}) em 1/2/4/8 camadas`
     renderComparar()
 
     gradeContainer.replaceChildren()
-    let achou = false
-    const secoes: [string, Filament[]][] = []
-    if (manuais.length > 0) secoes.push(['Meus rolos', manuais])
-    secoes.push(['Catálogo', FILAMENTS])
-    for (const [titulo, lista] of secoes) {
-      const visiveis = ordenadas(filtradas(lista))
-      if (visiveis.length === 0) continue
-      achou = true
-      gradeContainer.append(secaoDe(titulo, visiveis))
-    }
-    if (!achou) {
+    const todos = ordenadas()
+    if (todos.length === 0) {
       const vazio = document.createElement('p')
       vazio.className = 'fil-busca-vazia'
-      vazio.textContent = 'Nenhum filamento encontrado para essa busca.'
+      vazio.textContent = 'Seu inventário está vazio — cadastre rolos no inventário (catálogo ou manual) e eles aparecem aqui.'
       gradeContainer.append(vazio)
+      return
     }
+
+    const secao = document.createElement('div')
+    secao.className = 'fil-secao'
+    const h = document.createElement('p')
+    h.className = 'fil-secao-titulo'
+    h.textContent = 'Seus rolos'
+    secao.append(h)
+    const grade = document.createElement('div')
+    grade.className = 'fil-grade'
+    let emNeutros = false
+    for (const f of todos) {
+      const neutro = grupoDe(f) === 'neutro'
+      if (neutro && !emNeutros) {
+        emNeutros = true
+        const rotulo = document.createElement('p')
+        rotulo.className = 'fil-grupo-rotulo'
+        rotulo.textContent = 'Neutros'
+        grade.append(rotulo)
+      }
+      grade.append(cardAmostra(f))
+    }
+    secao.append(grade)
+    gradeContainer.append(secao)
   }
 
   /**

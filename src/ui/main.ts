@@ -1,10 +1,13 @@
 import type { Bitmap, Filament } from '../color/types.ts'
 import type { GenerateOptions, GenerateResult } from '../generate.ts'
+import { FILAMENTS } from '../filaments/db.ts'
+import { suggestPalette } from '../color/suggest.ts'
 import { desenharPreview2D } from '../preview/preview2d.ts'
 import { criarVisualizador3D, type Visualizador3D } from '../preview/preview3d.ts'
 import { cancelar, gerarNoWorker, type Progresso } from '../worker/client.ts'
 import { montarFilamentos } from './filamentos.ts'
-import { montarPaleta } from './paleta.ts'
+import { lerInventario, montarInventario } from './inventario.ts'
+import { montarPaleta, type SugestaoPaleta } from './paleta.ts'
 import { desenharMiniatura, montarCrop, montarUpload } from './foto.ts'
 import {
   consequenciaDoNivel,
@@ -88,6 +91,11 @@ let resultado: GenerateResult | null = null
 let gerando = false
 let cancelado = false
 let visualizador: Visualizador3D | null = null
+
+// Rolos disponíveis para os slots (o inventário). Enquanto a lane B não entrega
+// o módulo, cai no catálogo para os slots seguirem funcionando à mão.
+const poolRolos: Filament[] = []
+let sugestaoAtual: SugestaoPaleta | null = null
 
 // Preview ao vivo (caminho de cor no worker) — ver o bloco "preview ao vivo".
 let temporizadorPreview: number | null = null
@@ -200,16 +208,20 @@ const subtitulo = cria('p', undefined, 'Sobe uma foto, escolhe os rolos, vê a c
 cabecalho.append(titulo, subtitulo)
 
 const layout = cria('main', 'layout')
-const colEsquerda = cria('aside', 'coluna')
-const colDireita = cria('section', 'coluna coluna-preview')
+// Três áreas por frequência de uso: setup (configuração, uma vez), paleta
+// (a tarefa de toda foto) e preview (o produto). A grade CSS decide o
+// empilhamento em cada largura — ver grid-template-areas no style.css.
+const gradeSetup = cria('section', 'grade grade-setup')
+const gradeFoto = cria('section', 'grade grade-foto')
+const gradePaleta = cria('section', 'grade grade-paleta')
+const gradePreview = cria('section', 'grade grade-preview')
 
 // --- coluna esquerda: foto ---
 
 const painelFoto = cria('section', 'painel')
-const tituloFoto = cria('h2')
-tituloFoto.innerHTML = '<span class="passo">1.</span> Foto'
+const tituloFoto = cria('h2', undefined, 'Foto')
 const areaUpload = cria('div')
-const areaCrop = cria('div', 'oculto')
+const areaCrop = cria('div', 'area-crop oculto')
 const canvasCrop = cria('canvas')
 areaCrop.append(canvasCrop)
 const linhaCrop = cria('div', 'linha-acoes')
@@ -231,21 +243,28 @@ areaMiniatura.append(canvasMiniatura, linhaMiniatura)
 
 painelFoto.append(tituloFoto, areaUpload, areaCrop, areaMiniatura)
 
-// --- coluna esquerda: cores ---
+// --- paleta desta foto (o controle central — área própria, acima da dobra) ---
 
-const painelCores = cria('section', 'painel')
-const tituloCores = cria('h2')
-tituloCores.innerHTML = '<span class="passo">2.</span> Cores'
-const dicaCores = cria('p', 'dica', 'Escolha os rolos na ordem em que quer que entrem no cronograma. O primeiro vira a base da peça. A prévia da cor ao lado atualiza sozinha.')
-const areaFilamentos = cria('div')
+const painelPaleta = cria('section', 'painel painel-paleta')
 const areaPaleta = cria('div', 'area-paleta')
-painelCores.append(tituloCores, dicaCores, areaFilamentos, areaPaleta)
+painelPaleta.append(areaPaleta)
+
+// --- configuração (uma vez): inventário + grade completa ---
+
+const painelInventario = cria('details', 'painel-recolhivel')
+const sumarioInventario = cria('summary', undefined, 'Meus rolos — inventário')
+const areaInventario = cria('div')
+painelInventario.append(sumarioInventario, areaInventario)
+
+const painelEscolher = cria('details', 'painel-recolhivel')
+const sumarioEscolher = cria('summary', undefined, 'Escolher rolos (grade completa)')
+const areaFilamentos = cria('div')
+painelEscolher.append(sumarioEscolher, areaFilamentos)
 
 // --- coluna esquerda: tamanho + dificuldade ---
 
 const painelDificuldade = cria('section', 'painel')
-const tituloDificuldade = cria('h2')
-tituloDificuldade.innerHTML = '<span class="passo">3.</span> Tamanho e dificuldade'
+const tituloDificuldade = cria('h2', undefined, 'Tamanho e dificuldade')
 
 const TAMANHOS = [100, 140, 180, 210, 250]
 const tamanhoPlaca = controleSelect({
@@ -430,10 +449,11 @@ const controlesAvancados = [
 ]
 areaAvancado.append(...controlesAvancados)
 
-const botaoGerar = cria('button', 'btn btn-primario btn-grande', 'Gerar geometria e .3mf')
-const areaErro = cria('div', 'erro oculto')
+// --- montagem das três áreas ---
 
-colEsquerda.append(painelFoto, painelCores, painelDificuldade, painelAvancado, botaoGerar, areaErro)
+gradeFoto.append(painelFoto)
+gradeSetup.append(painelInventario, painelEscolher, painelDificuldade, painelAvancado)
+gradePaleta.append(painelPaleta)
 
 // --- coluna direita: preview protagonista (sticky) ---
 
@@ -446,14 +466,14 @@ const aba2d = cria('button', 'aba ativa', 'Cor (2D)')
 const aba3d = cria('button', 'aba', 'Modelo (3D)')
 abasPreview.append(aba2d, aba3d)
 
-const bloco2d = cria('div', 'bloco-preview')
+const bloco2d = cria('div', 'bloco-preview bloco-preview-2d')
 const canvas2d = cria('canvas')
 canvas2d.id = 'preview-2d'
 canvas2d.classList.add('oculto')
 const estadoVazio2d = cria('div', 'estado-vazio')
 bloco2d.append(canvas2d, estadoVazio2d)
 
-const bloco3d = cria('div', 'bloco-preview oculto')
+const bloco3d = cria('div', 'bloco-preview bloco-preview-3d oculto')
 const container3d = cria('div')
 container3d.id = 'preview-3d'
 container3d.classList.add('oculto')
@@ -482,7 +502,12 @@ const tituloDownloads = cria('h2', undefined, 'Baixar')
 const areaDownloads = cria('div', 'downloads')
 painelDownloads.append(tituloDownloads, areaDownloads)
 
-colDireita.append(painelPreview, areaAviso, painelStats, painelDownloads)
+// O botão Gerar (e o erro) ficam na coluna da prévia: a ação "produzir" mora
+// junto do produto, e tira altura da coluna da paleta (que é a mais alta).
+const botaoGerar = cria('button', 'btn btn-primario btn-grande', 'Gerar geometria e .3mf')
+const areaErro = cria('div', 'erro oculto')
+
+gradePreview.append(painelPreview, botaoGerar, areaErro, areaAviso, painelStats, painelDownloads)
 
 // --- spinner ---
 
@@ -496,7 +521,7 @@ spinner.append(anel, textoSpinner, botaoCancelar)
 
 const rodape = cria('footer', 'rodape', 'puzzle — open source, MIT. Foto e geração rodam 100% no navegador.')
 
-layout.append(colEsquerda, colDireita)
+layout.append(gradeFoto, gradeSetup, gradePaleta, gradePreview)
 app.append(cabecalho, layout, rodape, spinner)
 
 // --------------------------------------------------------------- erros
@@ -540,12 +565,13 @@ botaoAplicar.addEventListener('click', () => {
   areaMiniatura.classList.remove('oculto')
   desenharMiniatura(canvasMiniatura, b)
   infoMiniatura.textContent = `${b.width} × ${b.height} px`
-  // foto nova muda o alvo do preview — recalcula o caminho de cor
+  // foto nova muda o alvo do preview e dispara a sugestão automática
   atualizaDificuldade()
   atualizaLimitesSliderPecas()
   atualizaEstadoVazio()
-  agendarPreview()
   atualizaGerar()
+  void sugerir()
+  remontarInventario()
 })
 
 botaoAjustar.addEventListener('click', () => {
@@ -568,11 +594,14 @@ botaoTrocarFoto.addEventListener('click', () => {
   bitmap = null
   resultado = null
   ultimaPreview = null
+  sugestaoAtual = null
   painelStats.classList.add('oculto')
   painelDownloads.classList.add('oculto')
   areaAviso.classList.add('oculto')
+  atualizaPaleta()
   atualizaEstadoVazio()
   atualizaGerar()
+  remontarInventario()
 })
 
 // ------------------------------------------------------------- filamentos
@@ -581,6 +610,8 @@ montarFilamentos({
   container: areaFilamentos,
   estado: filamentos,
   aoMudar: () => {
+    // escolha manual à parte dos slots — a sugestão deixa de ser a vigente
+    sugestaoAtual = null
     atualizaGerar()
     atualizaEstadoVazio()
     // filamento é o que mais muda a cor — recálculo ao vivo, com debounce
@@ -609,7 +640,115 @@ const atualizaPaleta = (): void => {
     layers: configuracao.layers,
     layerHeight: configuracao.layerHeight,
     baseLayers: Math.max(1, Math.round(configuracao.baseThickness / configuracao.layerHeight)),
+    pool: poolRolos,
+    sugestao: sugestaoAtual,
+    aoMudar: () => {
+      // slot editado à mão — a sugestão deixa de ser a verdade vigente
+      sugestaoAtual = null
+      atualizaGerar()
+      atualizaEstadoVazio()
+      agendarPreview()
+    },
   })
+}
+
+/**
+ * Preenche os slots com a sugestão do motor da lane C, quando ele existir.
+ *
+ * A sugestão é `pool × maxColors` avaliações de `scorePlan` numa imagem já
+ * amostrada — muito mais barata que a geração (que são segundos). Medida na
+ * prática fica em poucos milissegundos; só vai pro worker se um dia passar de
+ * ~100ms (pool grande ou maxColors alto). Até lá roda na thread principal.
+ */
+const sugerir = async (): Promise<void> => {
+  if (!bitmap || poolRolos.length === 0) {
+    // sem foto ou sem inventário — slots seguem manuais, e nada de número
+    // recomendado inventado na tela
+    sugestaoAtual = null
+    atualizaPaleta()
+    return
+  }
+  const t0 = performance.now()
+  let s: SugestaoPaleta
+  try {
+    s = suggestPalette(bitmap, poolRolos, {
+      layerHeight: configuracao.layerHeight,
+      baseLayers: Math.max(1, Math.round(configuracao.baseThickness / configuracao.layerHeight)),
+      layers: configuracao.layers,
+      maxColors: 6,
+      seed: SEED,
+    })
+  } catch (e) {
+    // motor falhou — volta para os slots manuais sem inventar recomendação
+    sugestaoAtual = null
+    mostraErro(e instanceof Error ? e.message : 'sugestão de paleta falhou')
+    atualizaPaleta()
+    return
+  }
+  const ms = performance.now() - t0
+  // ponytail: decisão worker-vs-thread medida aqui no console. Se passar de
+  // ~100ms com frequência, mover o `suggestPalette` pro worker de preview.
+  if (ms > 100) console.warn(`sugestão levou ${ms.toFixed(0)}ms — considerar o worker`)
+
+  sugestaoAtual = s
+  filamentos.splice(0, filamentos.length, ...s.filaments)
+  atualizaPaleta()
+  agendarPreview()
+  atualizaGerar()
+  atualizaEstadoVazio()
+}
+
+/** Carrega o inventário e monta o gerenciador dele. É o pool dos slots. */
+const inicializarInventario = (): void => {
+  areaInventario.replaceChildren()
+  poolRolos.splice(0, poolRolos.length, ...lerInventario())
+  montarInventario({
+    container: areaInventario,
+    // Preenche o estado vazio com as cores do catálogo que dariam bom resultado
+    // NESTA foto — em vez de uma lista fixa inventada. `null` sem foto.
+    sugerirDoCatalogo: catalogoSugerido,
+    aoMudar: (rolos) => {
+      poolRolos.splice(0, poolRolos.length, ...rolos)
+      if (bitmap) void sugerir()
+      else atualizaPaleta()
+    },
+  })
+  atualizaPaleta()
+}
+
+/**
+ * Cores do catálogo que dariam bom resultado nesta foto, ou `null` sem foto.
+ *
+ * Roda `suggestPalette` sobre o catálogo INTEIRO (não sobre o inventário — o
+ * ponto é sugerir o que a pessoa poderia ter). Custa dezenas de ms, então o
+ * resultado é **cacheado por foto**: o inventário chama isto a cada render
+ * dele, e sem cache travaria a cada clique. A chave é a identidade do `bitmap`
+ * (muda a cada recorte), e `remontarInventario` zera o cache quando a foto muda.
+ */
+let cacheCatalogo: { chave: Bitmap; valor: Filament[] } | null = null
+
+const catalogoSugerido = (): Filament[] | null => {
+  if (!bitmap) return null
+  if (cacheCatalogo?.chave === bitmap) return cacheCatalogo.valor
+  try {
+    const s = suggestPalette(bitmap, FILAMENTS, {
+      layerHeight: configuracao.layerHeight,
+      baseLayers: Math.max(1, Math.round(configuracao.baseThickness / configuracao.layerHeight)),
+      layers: configuracao.layers,
+      maxColors: 6,
+      seed: SEED,
+    })
+    cacheCatalogo = { chave: bitmap, valor: s.filaments }
+    return s.filaments
+  } catch {
+    return null
+  }
+}
+
+/** Foto mudou → o inventário precisa refletir a sugestão nova; remonta e zera o cache. */
+const remontarInventario = (): void => {
+  cacheCatalogo = null
+  inicializarInventario()
 }
 
 const agendarPreview = (): void => {
@@ -665,6 +804,14 @@ const rodarPreview = (): void => {
 }
 
 const desenhaPreview2d = (preview: Bitmap): void => {
+  // A CAIXA da prévia acompanha a proporção da placa (tira de `preview`), em vez
+  // de ser um retângulo quase quadrado fixo — senão sobram tarjas pretas em cima
+  // e embaixo. `--ar` alimenta o max-width no CSS (o teto de altura encolhe a
+  // largura, preservando o aspecto em qualquer largura). O canvas (preview2d.ts)
+  // preserva a proporção dentro da caixa.
+  const ar = preview.width / preview.height
+  bloco2d.style.aspectRatio = `${preview.width} / ${preview.height}`
+  bloco2d.style.setProperty('--ar', String(ar))
   desenharPreview2D(canvas2d, preview)
   canvas2d.classList.remove('oculto')
   estadoVazio2d.classList.add('oculto')
@@ -674,10 +821,10 @@ const atualizaEstadoVazio = (): void => {
   if (ultimaPreview) return
   if (!bitmap) {
     estadoVazio2d.innerHTML =
-      'A prévia da cor resolvida aparece aqui ao vivo, conforme você escolhe os rolos. <strong>Suba e recorte uma foto</strong> para começar.'
+      'A prévia da cor resolvida aparece aqui ao vivo. <strong>Suba e recorte uma foto</strong> para começar.'
   } else if (filamentos.length === 0) {
     estadoVazio2d.innerHTML =
-      'Foto pronta. <strong>Escolha pelo menos um filamento</strong> para a cor da prévia aparecer.'
+      'Foto pronta — aguarde a sugestão automática preencher os slots, ou <strong>adicione rolos à mão</strong> na paleta ao lado.'
   } else {
     estadoVazio2d.innerHTML = '<strong>Gerando a prévia…</strong>'
   }
@@ -940,8 +1087,37 @@ const mostraResultado = (res: GenerateResult): void => {
 
 // ------------------------------------------------------------- bootstrap
 
+// Sticky da prévia: gruda SÓ enquanto isso ajuda. Quando a página precisa
+// rolar (janela pequena, muitos rolos, avançado aberto), a prévia fixa ocupa a
+// altura toda e impede de ver o resto — então o sticky solta. É o caso em que
+// "manter a prévia à vista" custa mais do que ganha.
+const atualizaSticky = (): void => {
+  const precisaRolar = document.documentElement.scrollHeight > window.innerHeight + 4
+  painelPreview.classList.toggle('nao-stick', precisaRolar)
+}
+window.addEventListener('resize', atualizaSticky)
+let temporizadorSticky: number | null = null
+const agendarSticky = (): void => {
+  if (temporizadorSticky !== null) window.clearTimeout(temporizadorSticky)
+  temporizadorSticky = window.setTimeout(() => {
+    temporizadorSticky = null
+    atualizaSticky()
+  }, 120)
+}
+// Toda mudança de layout (abrir/fechar detalhes, gerar, subir foto) pode mudar o
+// scrollHeight — o observer cobre tudo sem eu ter que lembrar de cada lugar.
+const observadorSticky = new MutationObserver(agendarSticky)
+observadorSticky.observe(document.body, {
+  childList: true,
+  subtree: true,
+  attributes: true,
+  attributeFilter: ['class', 'open'],
+})
+atualizaSticky()
+
 atualizaGerar()
 atualizaEstadoVazio()
 atualizaDificuldade()
 atualizaLimitesSliderPecas()
 atualizaPaleta()
+inicializarInventario()

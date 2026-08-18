@@ -42,9 +42,9 @@ body {
 }
 
 #app {
-  max-width: 1200px;
+  max-width: 1440px;
   margin: 0 auto;
-  padding: 20px 20px 60px;
+  padding: 16px 20px 40px;
 }
 
 .cabecalho {
@@ -69,28 +69,62 @@ body {
 
 .layout {
   display: grid;
-  grid-template-columns: minmax(320px, 440px) 1fr;
-  gap: 20px;
+  grid-template-columns: minmax(260px, 300px) minmax(400px, 1fr) minmax(320px, 460px);
+  grid-template-areas:
+    'foto paleta preview'
+    'setup paleta preview';
+  gap: 14px;
   align-items: start;
 }
 
-@media (max-width: 900px) {
+/* Largura média: setup à esquerda, paleta à direita, preview embaixo ocupando
+   a largura toda — nada de coluna estreita rolando sem fim. */
+@media (max-width: 1280px) {
   .layout {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(260px, 300px) 1fr;
+    grid-template-areas:
+      'foto paleta'
+      'setup paleta'
+      'preview preview';
   }
 }
 
-.coluna {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
+/* Estreita: uma coluna só, na ordem foto → paleta → preview → setup. */
+@media (max-width: 900px) {
+  .layout {
+    grid-template-columns: 1fr;
+    grid-template-areas:
+      'foto'
+      'paleta'
+      'preview'
+      'setup';
+  }
+}
+
+.grade {
   min-width: 0;
 }
 
-/* A coluna do preview estica até a altura da linha da grade (que é a altura da
-   coluna esquerda, a mais alta), para o painel sticky ter onde viajar enquanto
-   os controles rolam por baixo dele. */
-.coluna-preview {
+.grade-foto {
+  grid-area: foto;
+}
+
+.grade-setup {
+  grid-area: setup;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.grade-paleta {
+  grid-area: paleta;
+}
+
+.grade-preview {
+  grid-area: preview;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
   align-self: stretch;
 }
 
@@ -99,14 +133,22 @@ body {
   top: 16px;
   z-index: 2;
   border-color: var(--destaque);
+  max-height: calc(100vh - 40px);
+  display: flex;
+  flex-direction: column;
 }
 
-@media (max-width: 900px) {
-  .coluna-preview {
-    align-self: auto;
-  }
+/* Solto pelo main.ts quando a página precisa rolar — a prévia fixa bloquearia
+   a visão do resto. Também libera o teto de altura quando solto. */
+.painel-preview.nao-stick {
+  position: static;
+  max-height: none;
+}
+
+@media (max-width: 1280px) {
   .painel-preview {
     position: static;
+    max-height: none;
     border-color: var(--borda);
   }
 }
@@ -174,14 +216,14 @@ body {
 /* --- crop --- */
 
 .area-crop {
-  display: flex;
-  justify-content: center;
+  min-width: 0;
 }
 
 .area-crop canvas {
+  display: block;
+  width: 100%;
   max-width: 100%;
   height: auto;
-  display: block;
   border-radius: 6px;
   background: #000;
 }
@@ -201,28 +243,30 @@ body {
 }
 
 /* miniatura: a foto vira isso depois de aplicar o recorte — o canvas grande
-   só ocupa a coluna enquanto se recorta. */
+   só ocupa a coluna enquanto se recorta. Fica em linha (imagem + controles) para
+   não gastar altura vertical na coluna de configuração. */
 .miniatura {
   display: flex;
-  flex-direction: column;
-  gap: 10px;
-  align-items: flex-start;
+  flex-direction: row;
+  align-items: center;
+  gap: 12px;
 }
 
 .miniatura canvas {
-  max-width: 200px;
+  max-width: 140px;
   height: auto;
   border: 1px solid var(--borda);
   border-radius: 8px;
   display: block;
   background: #000;
+  flex-shrink: 0;
 }
 
 .linha-miniatura {
   display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
 }
 
 /* --- filamentos --- */
@@ -593,7 +637,24 @@ body {
 
 .bloco-preview {
   min-width: 0;
-  height: clamp(340px, 56vh, 540px);
+}
+
+/* 2D: a caixa acompanha a proporção da placa (o main.ts seta aspect-ratio e
+   --ar). O max-width deriva da proporção para que, em coluna larga, a LARGURA
+   encolha em vez de a altura estourar o teto e quebrar o aspecto (tarja preta). */
+.bloco-preview-2d {
+  width: 100%;
+  height: auto;
+  aspect-ratio: auto;
+  min-height: 300px;
+  max-height: min(60vh, 560px);
+  max-width: calc(min(60vh, 560px) * var(--ar, 1));
+  margin: 0 auto;
+}
+
+/* 3D: altura fixa — o three.js precisa de um contêiner dimensionado. */
+.bloco-preview-3d {
+  height: clamp(320px, 46vh, 440px);
 }
 
 .estado-vazio {
@@ -706,8 +767,35 @@ body {
 
 /* --- avançado (recolhido) --- */
 
+.painel-recolhivel {
+  border: 1px solid var(--borda);
+  border-radius: var(--raio);
+  background: var(--painel);
+}
+
+.painel-recolhivel summary {
+  cursor: pointer;
+  padding: 10px 14px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--mudo);
+  user-select: none;
+}
+
+.painel-recolhivel summary:hover {
+  color: var(--texto);
+}
+
+.painel-recolhivel[open] summary {
+  border-bottom: 1px solid var(--borda);
+  color: var(--texto);
+}
+
+.painel-recolhivel > div {
+  padding: 12px 14px;
+}
+
 .avancado {
-  margin-top: 4px;
   border: 1px solid var(--borda);
   border-radius: var(--raio);
   background: var(--painel);
@@ -877,8 +965,286 @@ body {
 }
 
 .rodape {
-  margin-top: 32px;
+  margin-top: 20px;
   color: var(--mudo);
   font-size: 12px;
   text-align: center;
+}
+
+/* --- paleta desta foto: slots (o controle central) --- */
+
+.painel-paleta {
+  border-color: var(--destaque);
+}
+
+.paleta-titulo {
+  margin: 0 0 2px;
+  font-size: 17px;
+  color: var(--texto);
+}
+
+.paleta-subtitulo {
+  margin: 0 0 12px;
+  font-size: 13px;
+  color: var(--mudo);
+}
+
+.paleta-slots {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: stretch;
+}
+
+.paleta-slot {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  width: 128px;
+  padding: 8px;
+  background: var(--painel-2);
+  border: 1px solid var(--borda);
+  border-radius: 10px;
+}
+
+.paleta-slot.base {
+  border-color: var(--destaque);
+}
+
+.paleta-slot-pos {
+  position: absolute;
+  top: -8px;
+  left: 8px;
+  font-size: 10px;
+  font-weight: 600;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: var(--painel);
+  border: 1px solid var(--borda);
+  color: var(--mudo);
+}
+
+.paleta-slot.base .paleta-slot-pos {
+  background: rgba(79, 140, 255, 0.15);
+  border-color: var(--destaque);
+  color: var(--destaque-hover);
+}
+
+.paleta-slot-cor {
+  width: 100%;
+  height: 84px;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  cursor: pointer;
+  padding: 0;
+}
+
+.paleta-slot-cor:hover {
+  border-color: var(--destaque);
+}
+
+.paleta-slot-nome {
+  font-size: 12px;
+  line-height: 1.2;
+  color: var(--texto);
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  min-height: 2.4em;
+}
+
+.paleta-slot-td {
+  font-size: 11px;
+  color: var(--mudo);
+}
+
+.paleta-slot-acoes {
+  display: flex;
+  gap: 2px;
+  margin-top: auto;
+}
+
+.paleta-slot-acao {
+  background: none;
+  border: none;
+  color: var(--mudo);
+  font-size: 13px;
+  line-height: 1;
+  padding: 4px 7px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.paleta-slot-acao:hover:not(:disabled) {
+  color: var(--texto);
+  background: var(--painel);
+}
+
+.paleta-slot-acao:disabled {
+  opacity: 0.3;
+  cursor: default;
+}
+
+.paleta-slot-adicionar {
+  width: 128px;
+  min-height: 100%;
+  border: 2px dashed var(--borda);
+  border-radius: 10px;
+  background: none;
+  color: var(--mudo);
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  padding: 10px;
+}
+
+.paleta-slot-adicionar:hover {
+  border-color: var(--destaque);
+  color: var(--destaque);
+  background: rgba(79, 140, 255, 0.06);
+}
+
+/* --- troca de slot (picker) --- */
+
+.paleta-picker {
+  margin-top: 4px;
+  padding: 10px 12px;
+  border: 1px solid var(--borda);
+  border-radius: 8px;
+  background: var(--painel-2);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.paleta-picker-titulo {
+  margin: 0 0 4px;
+  font-size: 12px;
+  color: var(--mudo);
+}
+
+.paleta-picker-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 8px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: none;
+  color: var(--texto);
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.paleta-picker-item:hover {
+  border-color: var(--destaque);
+  background: rgba(79, 140, 255, 0.08);
+}
+
+.paleta-picker-swatch {
+  width: 16px;
+  height: 16px;
+  border-radius: 4px;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  flex-shrink: 0;
+}
+
+.paleta-picker-item .paleta-picker-td {
+  margin-left: auto;
+  color: var(--mudo);
+  font-size: 11px;
+}
+
+.paleta-picker-vazio {
+  margin: 0;
+  font-size: 12px;
+  color: var(--mudo);
+}
+
+.paleta-picker-fechar {
+  align-self: flex-start;
+  margin-top: 4px;
+  padding: 3px 10px;
+  border: 1px solid var(--borda);
+  border-radius: 6px;
+  background: var(--painel);
+  color: var(--mudo);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.paleta-picker-fechar:hover {
+  color: var(--texto);
+  border-color: var(--destaque);
+}
+
+/* --- curva de erro por número de cores --- */
+
+.paleta-curva {
+  margin-top: 14px;
+}
+
+.paleta-curva-barras {
+  display: flex;
+  gap: 8px;
+  align-items: flex-end;
+  height: 120px;
+  margin-top: 8px;
+}
+
+.paleta-curva-coluna {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 5px;
+  height: 100%;
+  min-width: 0;
+}
+
+.paleta-curva-barra {
+  width: 100%;
+  border-radius: 4px 4px 0 0;
+  background: var(--painel-2);
+  border: 1px solid var(--borda);
+  min-height: 2px;
+  transition: height 0.2s ease;
+}
+
+.paleta-curva-barra.recomendada {
+  background: var(--destaque);
+  border-color: var(--destaque);
+}
+
+.paleta-curva-rotulo {
+  font-size: 12px;
+  color: var(--mudo);
+}
+
+.paleta-recomendacao {
+  margin: 12px 0 0;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: var(--aviso-fundo);
+  border: 1px solid var(--aviso-borda);
+  color: var(--aviso-texto);
+  font-size: 13px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.paleta-recomendacao strong {
+  color: var(--aviso-texto);
+}
+
+.paleta-barra {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 4px;
 }

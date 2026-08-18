@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import type { Bitmap, Filament } from './types.ts'
 import { resolveColor } from './resolve.ts'
 import { toneMap } from './tone.ts'
+import { rgbToLab } from './space.ts'
 
 /**
  * Reproduz a estrutura do problema real (foto do Guilherme: cachorro preto
@@ -109,6 +110,26 @@ test('sem variação de luminância na foto (ou no catálogo), o tone map devolv
   const monocromatico: Filament[] = [{ id: 'k', name: 'Preto', hex: '#111111', td: 0.5 }]
   const out2 = toneMap(foto, monocromatico)
   assert.deepEqual(out2.data, foto.data)
+})
+
+test('toneMap só mexe em L — croma e matiz da foto passam intactos (decisão medida, ver o comentário do arquivo)', () => {
+  // Duas tentativas de remapear croma também foram medidas e rejeitadas (a
+  // segunda chegou a DESTRUIR a croma numa cena saturada — razão 0,12 contra
+  // a foto original). Este teste trava a decisão atual: só L muda.
+  const foto = cenaCachorro(30, 24)
+  const out = toneMap(foto, FILAMENTOS)
+  let maiorDiffA = 0
+  let maiorDiffB = 0
+  for (let i = 0; i < foto.data.length; i += 4) {
+    const labIn = rgbToLab({ r: foto.data[i], g: foto.data[i + 1], b: foto.data[i + 2] })
+    const labOut = rgbToLab({ r: out.data[i], g: out.data[i + 1], b: out.data[i + 2] })
+    maiorDiffA = Math.max(maiorDiffA, Math.abs(labIn[1] - labOut[1]))
+    maiorDiffB = Math.max(maiorDiffB, Math.abs(labIn[2] - labOut[2]))
+  }
+  // tolerância cobre só o arredondamento de 8 bits do round-trip Lab→RGB→Lab
+  // depois que L muda — não croma sendo de fato remapeada
+  assert.ok(maiorDiffA < 1, `a* mudou mais do que arredondamento explica: ${maiorDiffA}`)
+  assert.ok(maiorDiffB < 1, `b* mudou mais do que arredondamento explica: ${maiorDiffB}`)
 })
 
 test('percentis inválidos e catálogo vazio lançam', () => {

@@ -639,3 +639,171 @@ details.fil-manual {
   color: var(--mudo);
   line-height: 1.45;
 }
+
+/* --- inventário --- */
+
+.fil-inventario {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.fil-inv-vazio {
+  border: 1px dashed var(--aviso-borda);
+  border-radius: 10px;
+  padding: 14px;
+  background: var(--aviso-fundo);
+  color: var(--aviso-texto);
+  font-size: 13px;
+  line-height: 1.45;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.fil-inv-vazio .fil-btn {
+  align-self: flex-start;
+  background: var(--painel-2);
+  border-color: var(--aviso-borda);
+  color: var(--aviso-texto);
+}
+
+.fil-inv-vazio .fil-btn:hover {
+  border-color: var(--destaque);
+  color: var(--texto);
+}
+
+.fil-inv-vazio-titulo {
+  margin: 0;
+  font-weight: 600;
+  color: var(--aviso-texto);
+}
+
+.fil-inv-vazio p:not(.fil-inv-vazio-titulo) {
+  margin: 0;
+}
+
+.fil-inv-lista {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.fil-inv-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--painel-2);
+  border: 1px solid var(--borda);
+  border-radius: 8px;
+  padding: 7px 10px;
+  font-size: 13px;
+  transition: border-color 0.12s ease;
+}
+
+.fil-inv-item:hover {
+  border-color: #3a4553;
+}
+
+.fil-inv-nome {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.fil-inv-td {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--mudo);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.fil-inv-td input {
+  width: 72px;
+  padding: 5px 7px;
+  border: 1px solid var(--borda);
+  border-radius: 6px;
+  background: var(--painel);
+  color: var(--texto);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.fil-inv-td input:focus-visible {
+  outline: 2px solid var(--destaque);
+  outline-offset: 1px;
+  border-color: transparent;
+}
+
+.fil-inv-acoes {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.fil-inv-status {
+  margin: 0;
+  font-size: 12px;
+  color: var(--mudo);
+}
+
+/* --- resumo recolhido --- */
+
+.fil-inv-caixa {
+  border: 1px solid var(--borda);
+  border-radius: 10px;
+  background: var(--painel);
+}
+
+.fil-inv-resumo {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 12px;
+  cursor: pointer;
+  user-select: none;
+  font-size: 13px;
+  color: var(--texto);
+  list-style-position: inside;
+}
+
+.fil-inv-resumo:hover {
+  color: var(--destaque-hover);
+}
+
+.fil-inv-resumo-titulo {
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.fil-inv-resumo-swatches {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  gap: 4px;
+  overflow: hidden;
+  justify-content: flex-end;
+}
+
+.fil-inv-resumo-swatch {
+  width: 16px;
+  height: 16px;
+  border-radius: 4px;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  flex-shrink: 0;
+}
+
+.fil-inv-conteudo {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 12px;
+  border-top: 1px solid var(--borda);
+}

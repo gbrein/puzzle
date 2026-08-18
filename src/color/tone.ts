@@ -16,22 +16,50 @@ import { LINEAR_LUT, pixelCount } from './solver.ts'
  * luminância que o HueForge faz. 1/99 em vez de min/max porque um pixel
  * isolado de ruído ou reflexo não pode esticar o mapeamento inteiro.
  *
- * ponytail: só L é remapeado, a-estrela e b-estrela (croma) ficam intactos.
- * Cheguei a escalar a-estrela e b-estrela pela MESMA inclinação (comprimir
- * croma junto com luminância, para uma foto escura-vira-clara não sair com
- * saturação fora de proporção) — a hipótese era recuperar o tom quente da
- * madeira que o experimento do Guilherme perdeu remapeando só L. Medido numa
- * cena sintética com a mesma estrutura (região escura de baixa croma + região
- * quente de croma alta, ver `tone.test.ts`): a escala uniforme piorou os DOIS
- * sinais — erro de croma contra o alvo (6,4 → 14,5 ΔE de croma) e ΔE geral
- * (11,6 → 15,0) — sem melhorar nem a fração do nível mais populoso nem os
- * níveis usados (28,4% / 9 níveis com só L vs. 27,5% / 9 níveis com croma
- * escalada, igual dentro do ruído). A escala uniforme empurra a croma pra
- * fora da proporção original porque a inclinação vem do alcance de L, não do
- * alcance de croma — os dois não têm por que casar. Upgrade, se a perda de
- * croma incomodar de novo: escalar a croma pela própria razão de alcance de
- * croma da paleta (não a de L), ou só comprimir quando o pixel cai fora do
- * envelope de croma que a paleta alcança, em vez de sempre.
+ * ponytail: só L é remapeado, a-estrela e b-estrela (croma) ficam intactos —
+ * **duas tentativas de corrigir isso, as duas medidas e as duas rejeitadas.**
+ *
+ * Tentativa 1 (escala uniforme): escalar a-estrela/b-estrela pela MESMA
+ * inclinação do L, comprimindo croma junto com luminância. Medida numa cena
+ * sintética (região escura de baixa croma + região quente de croma alta, ver
+ * `tone.test.ts`): piorou os DOIS sinais — erro de croma contra o alvo (6,4 →
+ * 14,5 ΔE de croma) e ΔE geral (11,6 → 15,0) — sem melhorar nível mais
+ * populoso nem níveis usados. A inclinação vem do alcance de L, não do
+ * alcance de croma — os dois não têm por que casar.
+ *
+ * Tentativa 2 (envelope de croma por L, "para cada altura, comprima o croma
+ * da foto pro máximo que a paleta alcança ali, preservando o matiz" — a
+ * madeira saía acinzentada mesmo com marrom na paleta). Testei exatamente
+ * essa proposta: envelope construído dos pontos (L, croma) de cada filamento
+ * puro (`rgbToLab` do hex), interpolado linear por L, comprime só quando o
+ * pixel excede o teto. Medido contra `public/cachorro.jpg` (madeira, croma
+ * moderado) e uma cena sintética de quadrantes saturados (croma alto, o caso
+ * que devia provar o conceito) — ΔE sempre contra a foto ORIGINAL (alvo
+ * fixo, não o alvo remapeado, pra não cair na armadilha do alvo móvel de
+ * novo) e uma métrica de croma (croma médio do resultado ÷ croma médio da
+ * foto — não só ΔE, que já mentiu uma vez neste arquivo):
+ *
+ *   cachorro (preto+marrom+branco):      off 0,50 · L 0,51 · L+croma 0,51
+ *   quadrantes saturados (5 filamentos): off 0,56 · L 0,68 · L+croma 0,12(!)
+ *
+ * A versão ingênua do envelope DESTRÓI a croma no caso saturado (razão 0,12):
+ * preto e branco entram no envelope com croma zero por definição, então o
+ * teto interpolado desaba pra perto de zero exatamente onde o remapeamento
+ * de L concentra mais pixels (perto dos extremos). Tirando os filamentos
+ * quase neutros (croma < 5) do envelope, o desastre some (razão 0,64) mas o
+ * ganho também — fica ABAIXO do que já fazer nada além do L (0,68). E no
+ * cachorro a razão não mexe NADA (0,51 com ou sem croma): a foto já perde
+ * metade do croma original SEM tone map nenhum (razão 0,50 no "off") — a
+ * perda acontece no casamento por vizinho mais próximo/na composição
+ * Beer-Lambert, não na entrada. Um remapeamento que só COMPRIME croma jamais
+ * consegue consertar uma perda que já acontece rio abaixo.
+ *
+ * Upgrade, se a perda de croma incomodar de novo: não é tone map — é
+ * `solveHeights`/`scorePlan` ponderarem croma explicitamente no casamento
+ * (hoje é distância euclidiana em Lab, L domina por ter faixa maior), ou uma
+ * correção de croma DEPOIS da busca, contra a paleta REAL já composta
+ * (`buildPalette` do `LayerPlan` escolhido) em vez do envelope grosseiro dos
+ * filamentos puros que dá pra montar aqui, antes de existir cronograma.
  */
 export interface ToneMapOptions {
   /** 'auto' (default) remapeia; 'off' devolve a foto sem tocar. */

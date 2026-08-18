@@ -26,12 +26,25 @@ export function desenharPreview2D(canvas: HTMLCanvasElement, preview: Bitmap): v
     .getContext('2d')!
     .putImageData(new ImageData(new Uint8ClampedArray(data), width, height), 0, 0)
 
-  const exib =
-    canvas.clientWidth > 0 && canvas.clientHeight > 0
-      ? { w: canvas.clientWidth, h: canvas.clientHeight }
-      : { w: width, h: height }
-  canvas.width = exib.w
-  canvas.height = exib.h
+  // O buffer do canvas vai em pixels de DISPOSITIVO, não em pixels CSS. Sem o
+  // devicePixelRatio o navegador recebe um buffer menor que a área pintada e
+  // interpola para cobrir — que é justamente o borrão que estamos evitando.
+  const dpr = window.devicePixelRatio || 1
+  const caixaW = canvas.clientWidth > 0 ? canvas.clientWidth : width
+  const caixaH = canvas.clientHeight > 0 ? canvas.clientHeight : height
+  canvas.width = Math.max(1, Math.round(caixaW * dpr))
+  canvas.height = Math.max(1, Math.round(caixaH * dpr))
+
+  // Encaixa PRESERVANDO A PROPORÇÃO. Esticar para preencher a caixa deformava a
+  // peça: a caixa da prévia é quase quadrada e a placa é 4:3, então o
+  // quebra-cabeça aparecia 38% mais alto do que vai sair impresso.
+  const escala = Math.min(canvas.width / width, canvas.height / height)
+  const w = Math.round(width * escala)
+  const h = Math.round(height * escala)
+  const x = Math.round((canvas.width - w) / 2)
+  const y = Math.round((canvas.height - h) / 2)
+
+  ctx.clearRect(0, 0, canvas.width, canvas.height)
   ctx.imageSmoothingEnabled = false
-  ctx.drawImage(telaNat, 0, 0, exib.w, exib.h)
+  ctx.drawImage(telaNat, x, y, w, h)
 }
